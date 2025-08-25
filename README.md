@@ -1,4 +1,4 @@
-# Plugantic - Simplify extendable composition with pydantic
+# Plugantic - Simplified extendable composition with pydantic
 
 ## Why?
 

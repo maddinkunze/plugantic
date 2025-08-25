@@ -1,6 +1,6 @@
 [project]
 name = "plugantic"
-description = "Simplify extendable composition with pydantic"
+description = "Simplified extendable composition with pydantic"
 authors = [
     { name = "Martin Kunze", email = "martin@martinkunze.com" }
 ]
