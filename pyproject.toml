@@ -1,0 +1,36 @@
+[project]
+name = "plugantic"
+description = "Simplify extendable composition with pydantic"
+authors = [
+    { name = "Martin Kunze", email = "martin@martinkunze.com" }
+]
+license-files = ["LICENSE"]
+readme = "README.md"
+requires-python = ">=3.8"
+dynamic = ["version"]
+
+dependencies = [
+    "pydantic",
+    "typing-extensions",
+]
+
+[project.urls]
+Homepage = "https://github.com/martinkunze/plugantic"
+Documentation = "https://github.com/martinkunze/plugantic/blob/main/README.md"
+Source = "https://github.com/martinkunze/plugantic"
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "plugantic._consts.version" }
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
