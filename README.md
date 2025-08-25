@@ -8,30 +8,38 @@ You may have learned that you should avoid inheritance in favor of composition. 
 # Declare a base config
 class OutputConfig(BaseModel):
     mode: str
-    def your_desired_functionality(self): ...
+    def print(self): ...
 
 # Declare all implementations of the base config
 class TextConfig(OutputConfig):
     mode: Literal["text"] = "text"
     text: str
-    def your_desired_functionality(self):
+    def print(self):
         print(self.text)
 
 class NumberConfig(OutputConfig):
     mode: Literal["number"] = "number"
     number: float
     precision: int = 2
-    def your_desired_functionality(self):
+    def print(self):
         print(f"{self.number:.{self.precision}f}")
 
 # Define a union type of all implementations
-AllOutputConfigs = Annotated[Union[TextConfig, NumberConfig], Field(discriminator="mode")]
+AllOutputConfigs = Annotated[Union[
+    TextConfig,
+    NumberConfig,
+], Field(discriminator="mode")]
 
 # Use the union type in your model
 class CommonConfig(BaseModel):
     output: AllOutputConfigs
 
-CommonConfig.model_validate({"output": {"mode": "text", "text": "Hello World"}})
+...
+
+CommonConfig.model_validate({"output": {
+    "mode": "text",
+    "text": "Hello World"
+}})
 ```
 
 Whilst this works, there are multiple issues and annoyances with that approach:
@@ -46,19 +54,21 @@ from plugantic import PluginModel
 
 class OutputConfig(PluginModel):
     mode: str
-    def your_desired_functionality(self): ...
+    def print(self): ...
 
 class TextConfig(OutputConfig):
-    mode: Literal["text"] # No redundant definition here!
+    # No redundant "text" definition here!
+    mode: Literal["text"]
     text: str
-    def your_desired_functionality(self):
+    def print(self):
         print(self.text)
 
 class NumberConfig(OutputConfig):
-    mode: Literal["number"] # No redundant definition here either!
+    # No redundant definition here either!
+    mode: Literal["number"]
     number: float
     precision: int = 2
-    def your_desired_functionality(self):
+    def print(self):
         print(f"{self.number:.{self.precision}f}")
 
 # No need to define a union type or a discriminator field!
@@ -66,15 +76,20 @@ class NumberConfig(OutputConfig):
 class CommonConfig(BaseModel):
     output: OutputConfig
 
-# You can even add new plugins after the fact!
+# You can even add new configs after the fact!
 class BytesConfig(OutputConfig):
     mode: Literal["bytes"]
     content: bytes
-    def your_desired_functionality(self):
+    def print(self):
         print(self.content.decode("utf-8"))
 
+...
+
 # The actual type is only evaluated when it is actually needed!
-CommonConfig.model_validate({"output": {"mode": "text", "text": "Hello World"}})
+CommonConfig.model_validate({"output": {
+    "mode": "text",
+    "text": "Hello World"
+}})
 ```
 
 ## Features
