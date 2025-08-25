@@ -43,11 +43,11 @@ CommonConfig.model_validate({"output": {
 ```
 
 Whilst this works, there are multiple issues and annoyances with that approach:
- - **Not extensible**: if one were to add a different config afterwards, the `AllOutputConfigs` type would need to be updated and so do all objects using it
- - **Weird maintainability**: you need to declare a type union and maintain it with every change
- - **Redundant definition**: of the discriminator field (i.e. `Literal[<x>] = <x>`)
+ - **Hard to maintain**: you need to declare a type union and update it with every change
+ - **Not extensible**: adding a different config afterwards would required to updatethe `AllOutputConfigs` type and all the objects using it
+ - **Redundant definition** of the discriminator field (i.e. `Literal[<x>] = <x>`)
 
-This library solves all these issues (and more), so you can just write
+This library solves all of these issues (and more), so you can just write
 
 ```python
 from plugantic import PluginModel
