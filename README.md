@@ -35,9 +35,9 @@ CommonConfig.model_validate({"output": {"mode": "text", "text": "Hello World"}})
 ```
 
 Whilst this works, there are multiple issues and annoyances with that approach:
- - Not extensible; if one were to add a different config afterwards, the `AllOutputConfigs` type and all objects using it would need to be updated
- - 
- - Redundant definition of the discriminator field (i.e. `Literal[<x>] = <x>`)
+ - **Not extensible**: if one were to add a different config afterwards, the `AllOutputConfigs` type would need to be updated and so do all objects using it
+ - **Weird maintainability**: you need to declare a type union and maintain it with every change
+ - **Redundant definition**: of the discriminator field (i.e. `Literal[<x>] = <x>`)
 
 This library solves all these issues (and more), so you can just write
 
