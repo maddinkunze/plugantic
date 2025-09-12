@@ -11,8 +11,15 @@ dynamic = ["version"]
 
 dependencies = [
     "pydantic",
+    "propert",
     "typing-extensions",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
 
 [project.urls]
 Homepage = "https://github.com/martinkunze/plugantic"
