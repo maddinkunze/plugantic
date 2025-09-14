@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing_extensions import ClassVar, Iterable, Type, Union, Self, Literal, Any, Callable, Generic, TypeVar, TypeVarTuple, Unpack, TypeAliasType, TypedDict, get_origin, get_args, TYPE_CHECKING
-from pydantic import BaseModel, GetCoreSchemaHandler, model_validator
+from random import randint
+from pydantic import BaseModel, GetCoreSchemaHandler, Field, model_validator
+from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import tagged_union_schema
 
 from ._helpers import recursive_powerset, recursive_linear, RecursiveList
@@ -19,6 +21,7 @@ class PluganticConfig(TypedDict):
     value: str|None = None
     supported_features: set[Any]|tuple[Any, ...]=()
     required_features: _RequiresFeatureSpec|None=None
+    auto_downcast: bool = False
     auto_downcasts: PluginDowncastCallbacks|None=None
 
 class PluginModel(BaseModel, _plugin_base):
@@ -27,10 +30,11 @@ class PluginModel(BaseModel, _plugin_base):
     __plugantic_required_features__: ClassVar[_RequiresFeatureSpec|None] = None
     __plugantic_inherit_features__: ClassVar[bool] = True
     __plugantic_generic_supertype__: ClassVar[type|None] = None
-    __plugantic_auto_downcasts__: ClassVar[set[Self]|None] = None
+    __plugantic_auto_downcast__: ClassVar[bool] = False # whether this class is an auto-downcast
     __plugantic_auto_downcast_callbacks__: ClassVar[PluginDowncastCallbacks|None] = None
     __plugantic_was_schema_created__: ClassVar[bool] = False
     __plugantic_check_schema_usage__: ClassVar[bool] = True
+    __plugantic_internal_name__: ClassVar[str] = ""
 
     plugantic_config: ClassVar[PluganticConfig|None] = None
 
@@ -47,18 +51,24 @@ class PluginModel(BaseModel, _plugin_base):
         if not isinstance(args, tuple):
             args = (args,)
         requires_features, supports_features = cls._unpack_features(*args)
-        return type(cls.__name__, (cls,), {}, supported_features=supports_features, required_features=requires_features, _plugantic_generic_supertype=cls)
+        return type(cls.__name__, (cls,), {}, supported_features=supports_features, required_features=requires_features, _plugantic_generic_supertype=cls, _plugantic_internal_name=f"Getitem{randint(1000, 9999)}")
 
     def __init_subclass__(cls, *,
         varname_type: str|None=None,
         value: str|None=None,
         supported_features: set[Any]|tuple[Any, ...]=(),
         required_features: _RequiresFeatureSpec|None=None,
+        auto_downcast: bool=False,
         auto_downcasts: PluginDowncastCallbacks|None=None,
         _plugantic_generic_supertype: type|None=None,
         _plugantic_downcast_callback: SimplePluginDowncastCallback|None=None,
+        _plugantic_internal_name: str|None=None,
     **kwargs):
-        if cls._check_plugantic_schema_usage():
+        skip_schema_check = (
+            (_plugantic_generic_supertype is not None) or
+            (_plugantic_downcast_callback is not None)
+        )
+        if not skip_schema_check and cls._check_plugantic_schema_usage():
             raise ValueError(f"Schema of {cls.__name__} has already been created. Creating new subclasses after the schema has been created will lead to undefined behaviour.")
 
         super().__init_subclass__(**kwargs)
@@ -68,13 +78,19 @@ class PluginModel(BaseModel, _plugin_base):
             value = cls.plugantic_config.get("value", None) or value
             supported_features = cls.plugantic_config.get("supported_features", ()) or supported_features
             required_features = cls.plugantic_config.get("required_features", None) or required_features
-            auto_downcasts = cls.plugantic_config.get("auto_downcasts", None) or auto_downcasts
+            auto_downcast = cls.plugantic_config.get("auto_downcast", False) or auto_downcast
+            auto_downcasts = cls.plugantic_config.pop("auto_downcasts", None) or auto_downcasts
 
         cls.__plugantic_was_schema_created__ = False
 
         cls.__plugantic_generic_supertype__ = _plugantic_generic_supertype
         cls.__plugantic_required_features__ = required_features
-        cls.__plugantic_auto_downcasts__ = None
+        cls.__plugantic_auto_downcast_callbacks__ = None
+
+        if _plugantic_internal_name:
+            cls.__plugantic_internal_name__ = cls.__plugantic_internal_name__ + _plugantic_internal_name
+        else:
+            cls.__plugantic_internal_name__ = cls.__name__
 
         supported_features = set(supported_features)
         if cls.__plugantic_inherit_features__:
@@ -91,6 +107,7 @@ class PluginModel(BaseModel, _plugin_base):
         cls._ensure_varname_default()
 
         if _plugantic_downcast_callback:
+            cls.__plugantic_auto_downcast__ = True
             _plugantic_downcast_callback(PluginDowncastHandler(cls))
 
         cls.__plugantic_auto_downcast_callbacks__ = auto_downcasts
@@ -103,15 +120,12 @@ class PluginModel(BaseModel, _plugin_base):
         callbacks = cls.__plugantic_auto_downcast_callbacks__
         cls.__plugantic_auto_downcast_callbacks__ = None
 
-        cls.__plugantic_auto_downcasts__ = cls._create_downcasts(callbacks)
+        cls._create_downcasts(callbacks)
 
     @classmethod
     def _create_downcasts(cls, downcast_callbacks: PluginDowncastCallbacks):
-        downcasts = set()
         for callback in cls._create_powerset_downcast_callbacks(downcast_callbacks):
-            subcls = type(cls.__name__, (cls,), {}, _plugantic_downcast_callback=callback)
-            downcasts.add(subcls)
-        return downcasts
+            type(cls.__name__, (cls,), {}, _plugantic_downcast_callback=callback, _plugantic_internal_name=f"Downcast{randint(1000, 9999)}")
 
     @classmethod
     def _create_linear_downcast_callbacks(cls, downcasts: PluginDowncastCallbacks):
@@ -166,10 +180,6 @@ class PluginModel(BaseModel, _plugin_base):
         return (feature,)
 
     @classmethod
-    def _create_subclass(cls):
-        return type(cls.__name__, (cls,), {})
-
-    @classmethod
     def _create_annotation(cls, name: str, value: Any):
         """
         Create an annotation of value for the given name as a member variable of the class
@@ -184,8 +194,14 @@ class PluginModel(BaseModel, _plugin_base):
     @classmethod
     def _create_field_default(cls, name: str, value: Any):
         actual_value = getattr(cls, name, cls._NoValue)
+        if isinstance(actual_value, FieldInfo):
+            if actual_value.default == value:
+                return
+            value = FieldInfo.merge_field_infos(actual_value, Field(default=value))
+        
         if actual_value == value:
             return
+        
         setattr(cls, name, value)
 
     @classmethod
@@ -263,25 +279,29 @@ class PluginModel(BaseModel, _plugin_base):
     @classmethod
     def _get_all_subclasses(cls):
         cls._ensure_downcasts()
-        if not cls.__plugantic_auto_downcasts__:
-            return cls.__subclasses__()
+        return [subcls for subcls in cls.__subclasses__() if not subcls.__plugantic_auto_downcast__]
 
-        return [subcls for subcls in cls.__subclasses__() if not subcls in cls.__plugantic_auto_downcasts__]
+    @classmethod
+    def _get_downcast_subclasses(cls):
+        cls._ensure_downcasts()
+        subclasses = set()
+        for subcls in cls.__subclasses__():
+            if not subcls.__plugantic_auto_downcast__:
+                continue
+            subclasses.add(subcls)
+            subclasses.update(subcls._get_downcast_subclasses())
+        return subclasses
 
     @classmethod
     def _get_valid_self_class(cls, filter: _PluginFeatureFilter) -> Type[Self]|None:
         if cls._is_valid_subclass(filter):
             return cls
 
-        cls._ensure_downcasts()
-        if not cls.__plugantic_auto_downcasts__:
-            return None
-
         return cls._select_optimal_subclass(cls._get_valid_downcast_subclasses(filter), filter)
 
     @classmethod
     def _get_valid_downcast_subclasses(cls, filter: _PluginFeatureFilter) -> Iterable[Type[Self]]:
-        return [subcls for subcls in cls.__plugantic_auto_downcasts__ if subcls._is_valid_subclass(filter)]
+        return [subcls for subcls in cls._get_downcast_subclasses() if subcls._is_valid_subclass(filter)]
 
     @classmethod
     def _get_valid_subclasses(cls, filter: _PluginFeatureFilter) -> Iterable[Type[Self]]:
@@ -315,8 +335,8 @@ class PluginModel(BaseModel, _plugin_base):
             _base = cls.__plugantic_generic_supertype__
 
         _filter = _PluginFeatureFilter(required_features=_required_features)
-
-        cls.__plugantic_was_schema_created__ = True
+        _base._ensure_downcasts()
+        _base.__plugantic_was_schema_created__ = True
 
         return _base._as_tagged_union(handler, _filter)
 
@@ -396,11 +416,29 @@ class PluginDowncastHandler(Generic[T]):
         for item in self.wraps._unwrap_feature(feature):
             self.wraps.__plugantic_supported_features__.discard(item)
 
-    def set_field_annotation(self, name: str, annotation: Type):
-        self.wraps._create_annotation(name, annotation)
+    def copy_and_update_field(self, name: str, other: FieldInfo):
+        """Copy the field from the parent class and update it with the given kwargs"""
+        field = self.wraps.model_fields.get(name, None)
+        if field:
+            field = FieldInfo.merge_field_infos(field, other)
+        else:
+            field = other
+        setattr(self.wraps, name, field)
 
-    def set_field_default(self, name: str, value: Any):
-        self.wraps._create_field_default(name, value)
+    def set_field_annotation(self, name: str, annotation: Type, *, merge_with_existing: bool=False):
+        """Change the annotation of the given field (this will reset every other piece of info attached to the field such as the default value, description, ... unless `merge_with_existing` is set to True)"""
+        if merge_with_existing:
+            self.copy_and_update_field(name, FieldInfo(anotation=annotation))
+        else:
+            self.wraps._create_annotation(name, annotation)
+            
+
+    def set_field_default(self, name: str, value: Any, *, merge_with_existing: bool=False):
+        """Change the default value of the given field (this will reset every other piece of info attached to the field such as the annotation, description, ... unless `merge_with_existing` is set to True)"""
+        if merge_with_existing:
+            self.copy_and_update_field(name, FieldInfo(default=value))
+        else:
+            self.wraps._create_field_default(name, value)
 
     def remove_field_default(self, name: str):
         self.set_field_default(name, ...)
