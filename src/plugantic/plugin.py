@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing_extensions import ClassVar, Iterable, Type, Union, Self, Literal, Any, Callable, Generic, TypeVar, TypeVarTuple, Unpack, TypeAliasType, TypedDict, get_origin, get_args, TYPE_CHECKING
+from typing_extensions import ClassVar, Iterable, Type, Union, Self, Literal, Any, Callable, Generic, TypeVar, TypeVarTuple, Unpack, TypeAliasType, TypedDict, get_type_hints, get_origin, get_args, TYPE_CHECKING
 from random import randint
 from pydantic import BaseModel, GetCoreSchemaHandler, Field, model_validator
 from pydantic.fields import FieldInfo
@@ -51,6 +51,10 @@ class PluginModel(BaseModel, _plugin_base):
     def __class_getitem__(cls, args):
         if not isinstance(args, tuple):
             args = (args,)
+        
+        if cls.__plugantic_generic_supertype__:
+            return cls._require_additional_features(*args)
+
         requires_features, supports_features = cls._unpack_features(*args)
         return type(cls.__name__, (cls,), {}, supported_features=supports_features, required_features=requires_features, _plugantic_generic_supertype=cls, _plugantic_internal_name=f"Getitem{randint(1000, 9999)}")
 
@@ -113,6 +117,24 @@ class PluginModel(BaseModel, _plugin_base):
             _plugantic_downcast_callback(PluginDowncastHandler(cls))
 
         cls.__plugantic_auto_downcast_callbacks__ = auto_downcasts
+
+    @classmethod
+    def _require_additional_features(cls, *features: Any) -> Type[Self]:
+        _base = cls.__plugantic_generic_supertype__ or cls
+        required_features = cls.__plugantic_required_features__
+
+        features = {item for feature in features for item in cls._unwrap_feature(feature)}
+
+        if required_features is None:
+            required_features = _RequiresAllFeatures(all_of=features)
+        elif isinstance(required_features, _RequiresAllFeatures):
+            required_features = required_features._require_additional_features(*features)
+        else:
+            required_features = _RequiresAllFeatures(all_of={required_features, *features})
+
+        supported_features = cls.__plugantic_supported_features__ | features
+
+        return type(_base.__name__, (_base,), {}, supported_features=supported_features, required_features=required_features, _plugantic_generic_supertype=_base, _plugantic_internal_name=f"Require{randint(1000, 9999)}")
 
     @classmethod
     def _ensure_downcasts(cls):
@@ -190,7 +212,7 @@ class PluginModel(BaseModel, _plugin_base):
         """
         if not hasattr(cls, "__annotations__"):
             cls.__annotations__ = {}
-        existing_annotation = cls.__annotations__.get(name, None)
+        existing_annotation = cls._get_declared_annotation(name)
         if (existing_annotation is None) and only_set_if_not_exists:
             return
         if existing_annotation == value and (not force_set):
@@ -229,14 +251,22 @@ class PluginModel(BaseModel, _plugin_base):
         cls._create_field_default(cls.__plugantic_varname_type__, declared_type)
 
     @classmethod
+    def _get_declared_annotation(cls, name: str):
+        annotation = None
+        try:
+            annotation = get_type_hints(cls).get(name, None)
+        except NameError:
+            pass
+        if not annotation:
+            field = cls.model_fields.get(name, None)
+            if field:
+                annotation = field.annotation
+        return annotation
+
+    @classmethod
     def _get_declared_type(cls) -> str|None:
         """Get the value declared for the discriminator name (e.g. `type: Literal["something"]` -> "something")"""
-        field = getattr(cls, "__annotations__", {}).get(cls.__plugantic_varname_type__, None)
-
-        if (not field) and hasattr(cls, "model_fields"):
-            field = cls.model_fields.get(cls.__plugantic_varname_type__, None)
-            if field:
-                field = field.annotation
+        field = cls._get_declared_annotation(cls.__plugantic_varname_type__)
 
         if get_origin(field) is Literal:
             return get_args(field)[0]
@@ -329,7 +359,7 @@ class PluginModel(BaseModel, _plugin_base):
         if len(subclasses) == 1:
             return handler(subclasses.pop())
 
-        choices = {subcls._get_declared_type(): handler(subcls) for subcls in subclasses}
+        choices = {subcls._get_declared_type(): handler.generate_schema(subcls) for subcls in subclasses}
         return tagged_union_schema(choices, discriminator=cls.__plugantic_varname_type__)
 
     @classmethod
@@ -399,6 +429,9 @@ class _RequiresAllFeatures(_RequiresFeatureSpec):
     def __init__(self, *, all_of: set[Any]):
         self.all_of_features, self.all_of_specs = self._split_features(all_of)
     
+    def _require_additional_features(self, *features: Any) -> Self:
+        return type(self)(all_of=self.all_of_features | self.all_of_specs | set(features))
+
     def applies_to(self, supported_features) -> bool:
         return self.all_of_features.issubset(supported_features) and all(spec.applies_to(supported_features) for spec in self.all_of_specs)
 
@@ -439,7 +472,6 @@ class PluginDowncastHandler(Generic[T]):
         else:
             self.wraps._create_annotation(name, annotation)
             
-
     def set_field_default(self, name: str, value: Any, *, merge_with_existing: bool=False):
         """Change the default value of the given field (this will reset every other piece of info attached to the field such as the annotation, description, ... unless `merge_with_existing` is set to True)"""
         if merge_with_existing:
@@ -447,13 +479,23 @@ class PluginDowncastHandler(Generic[T]):
         else:
             self.wraps._create_field_default(name, value)
 
+    def remove_field_default(self, name: str):
+        self.set_field_default(name, ...)
+
     def set_class_var(self, name: str, value: Any, *, set_annotation: bool=False):
         if set_annotation:
             self.wraps._create_annotation(name, ClassVar, only_set_if_not_exists=True)
         setattr(self.wraps, name, value)
 
-    def remove_field_default(self, name: str):
-        self.set_field_default(name, ...)
+    def require_recursive_features(self, name: str, *features: Any, merge_with_existing: bool=False):
+        annotation = self.wraps._get_declared_annotation(name)
+        if not annotation:
+            raise ValueError(f"Field {name} does not exist in {self.wraps}")
+        if not issubclass(annotation, PluginModel):
+            raise ValueError(f"Field {name} in {self.wraps} is not a PluginModel")
+
+        annotation = annotation._require_additional_features(*features)
+        self.set_field_annotation(name, annotation, merge_with_existing=merge_with_existing)
 
 SimplePluginDowncastCallback = TypeAliasType("SimplePluginDowncastCallback", Callable[[PluginDowncastHandler[T]], None], type_params=(T,))
 PluginDowncastCallbacks = TypeAliasType("PluginDowncastCallbacks", RecursiveList[SimplePluginDowncastCallback[T]], type_params=(T,))
