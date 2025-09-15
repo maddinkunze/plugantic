@@ -31,6 +31,7 @@ class PluginModel(BaseModel, _plugin_base):
     __plugantic_inherit_features__: ClassVar[bool] = True
     __plugantic_generic_supertype__: ClassVar[type|None] = None
     __plugantic_auto_downcast__: ClassVar[bool] = False # whether this class is an auto-downcast
+    __plugantic_auto_downcasts__internal__: ClassVar[list[type]] # only there for temporarily saving all auto-downcasts as otherwise they would get optimized away by the interpreter/bytecode-compiler; NOTE: there are NO guarantees made about this variable at all and it should ONLY be used for reference storage of downcasts
     __plugantic_auto_downcast_callbacks__: ClassVar[PluginDowncastCallbacks|None] = None
     __plugantic_was_schema_created__: ClassVar[bool] = False
     __plugantic_check_schema_usage__: ClassVar[bool] = True
@@ -86,6 +87,7 @@ class PluginModel(BaseModel, _plugin_base):
         cls.__plugantic_generic_supertype__ = _plugantic_generic_supertype
         cls.__plugantic_required_features__ = required_features
         cls.__plugantic_auto_downcast_callbacks__ = None
+        cls.__plugantic_auto_downcasts__internal__ = []
 
         if _plugantic_internal_name:
             cls.__plugantic_internal_name__ = cls.__plugantic_internal_name__ + _plugantic_internal_name
@@ -125,7 +127,8 @@ class PluginModel(BaseModel, _plugin_base):
     @classmethod
     def _create_downcasts(cls, downcast_callbacks: PluginDowncastCallbacks):
         for callback in cls._create_powerset_downcast_callbacks(downcast_callbacks):
-            type(cls.__name__, (cls,), {}, _plugantic_downcast_callback=callback, _plugantic_internal_name=f"Downcast{randint(1000, 9999)}")
+            subcls = type(cls.__name__, (cls,), {}, _plugantic_downcast_callback=callback, _plugantic_internal_name=f"Downcast{randint(1000, 9999)}")
+            cls.__plugantic_auto_downcasts__internal__.append(subcls) # store auto-downcasts temporarily to avoid them getting optimized away by the interpreter/bytecode-compiler
 
     @classmethod
     def _create_linear_downcast_callbacks(cls, downcasts: PluginDowncastCallbacks):
@@ -180,15 +183,19 @@ class PluginModel(BaseModel, _plugin_base):
         return (feature,)
 
     @classmethod
-    def _create_annotation(cls, name: str, value: Any):
+    def _create_annotation(cls, name: str, value: Any, *, only_set_if_not_exists: bool=False, force_set: bool=False):
         """
         Create an annotation of value for the given name as a member variable of the class
         e.g. name="type" value=Literal["test"] -> `type: Literal["test"]`
         """
         if not hasattr(cls, "__annotations__"):
             cls.__annotations__ = {}
-        if not cls.__annotations__.get(name, None):
-            cls.__annotations__[name] = value
+        existing_annotation = cls.__annotations__.get(name, None)
+        if (existing_annotation is None) and only_set_if_not_exists:
+            return
+        if existing_annotation == value and (not force_set):
+            return
+        cls.__annotations__[name] = value
 
     _NoValue = object()
     @classmethod
@@ -439,6 +446,11 @@ class PluginDowncastHandler(Generic[T]):
             self.copy_and_update_field(name, FieldInfo(default=value))
         else:
             self.wraps._create_field_default(name, value)
+
+    def set_class_var(self, name: str, value: Any, *, set_annotation: bool=False):
+        if set_annotation:
+            self.wraps._create_annotation(name, ClassVar, only_set_if_not_exists=True)
+        setattr(self.wraps, name, value)
 
     def remove_field_default(self, name: str):
         self.set_field_default(name, ...)
