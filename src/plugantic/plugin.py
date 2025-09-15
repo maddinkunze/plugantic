@@ -359,6 +359,10 @@ class PluginModel(BaseModel, _plugin_base):
         if len(subclasses) == 1:
             return handler(subclasses.pop())
 
+        # I dont know what the actual difference between `handler(...)` and `handler.generate_schema(...)` is
+        # but somehow, any other constellation than this will cause errors (recursion depth exceeded, missing self-referential models, ...)
+        # see commit #f785994 for details; before this commit, everything except basic usage worked, after it, everything worked again
+        # everything is so weird :/
         choices = {
             subcls._get_declared_type(): 
             handler.generate_schema(subcls) if subcls.__plugantic_supported_features__
