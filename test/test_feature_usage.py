@@ -207,3 +207,40 @@ def test_feature_usage_oneof():
         "type": "test4",
         "value": "some value",
     }})
+
+def test_feature_usage_mixed():
+    Feature1: TypeAlias = Literal["feature1"]
+    Feature2: TypeAlias = Literal["feature2"]
+    Feature3: TypeAlias = Literal["feature3"]
+    
+    class TestBase(PluginModel):
+        value: str
+    
+    class TestImpl1(TestBase[Feature1]):
+        type: Literal["test1"]
+    
+    class TestImpl2(TestBase[Feature2]):
+        type: Literal["test2"]
+    
+    class TestImpl3(TestBase[Feature1, Feature2]):
+        type: Literal["test3"]
+    
+    class OtherConfig(BaseModel):
+        config: TestBase
+    
+    OtherConfig(config=TestImpl1(value="some value"))
+    OtherConfig(config=TestImpl2(value="some value"))
+    OtherConfig(config=TestImpl3(value="some value"))
+
+    OtherConfig.model_validate({"config": {
+        "type": "test1",
+        "value": "some value",
+    }})
+    OtherConfig.model_validate({"config": {
+        "type": "test2",
+        "value": "some value",
+    }})
+    OtherConfig.model_validate({"config": {
+        "type": "test3",
+        "value": "some value",
+    }})

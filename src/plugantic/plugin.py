@@ -359,7 +359,11 @@ class PluginModel(BaseModel, _plugin_base):
         if len(subclasses) == 1:
             return handler(subclasses.pop())
 
-        choices = {subcls._get_declared_type(): handler.generate_schema(subcls) for subcls in subclasses}
+        choices = {
+            subcls._get_declared_type(): 
+            handler.generate_schema(subcls) if subcls.__plugantic_supported_features__
+            else handler(subcls)
+            for subcls in subclasses}
         return tagged_union_schema(choices, discriminator=cls.__plugantic_varname_type__)
 
     @classmethod
