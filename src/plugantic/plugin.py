@@ -9,24 +9,52 @@ from pydantic_core.core_schema import tagged_union_schema
 from ._helpers import recursive_powerset, recursive_linear, RecursiveList
 from ._types import _VanishBase
 
+F = TypeVar("T")
 Ts = TypeVarTuple("Ts")
 
 if TYPE_CHECKING:
     _plugin_base = Generic[Unpack[Ts]]
+    _feature_base = Generic[F]
 else:
     _plugin_base = _VanishBase
+    _feature_base = _VanishBase
+
+class PluginFeature(_feature_base):
+    def __init__(self, value: Any):
+        self._value = value
+
+    def __class_getitem__(cls, value: Any):
+        return cls(value)
+
+    @staticmethod
+    def _get_other(other: Any):
+        if isinstance(other, PluginFeature):
+            return other._value
+        return other
+
+    def __eq__(self, other: Any):
+        return self._value == self._get_other(other)
+
+    def __neq__(self, other: Any):
+        return self._value != self._get_other(other)
+
+    def __or__(self, other: PluginFeature):
+        return Union[self, other]
+
+    def __hash__(self):
+        return hash(self._value)
 
 class PluganticConfig(TypedDict):
     varname_type: str|None = None
     value: str|None = None
-    supported_features: set[Any]|tuple[Any, ...]=()
+    supported_features: set[PluganticFeatureType]|tuple[PluganticFeatureType, ...]=()
     required_features: _RequiresFeatureSpec|None=None
     auto_downcast: bool = False
     auto_downcasts: PluginDowncastCallbacks|None=None
 
 class PluginModel(BaseModel, _plugin_base):
     __plugantic_varname_type__: ClassVar[str] = "type"
-    __plugantic_supported_features__: ClassVar[set[Any]] = set()
+    __plugantic_supported_features__: ClassVar[set[_PFeatSpec]] = set()
     __plugantic_required_features__: ClassVar[_RequiresFeatureSpec|None] = None
     __plugantic_inherit_features__: ClassVar[bool] = True
     __plugantic_generic_supertype__: ClassVar[type|None] = None
@@ -51,7 +79,7 @@ class PluginModel(BaseModel, _plugin_base):
     def __class_getitem__(cls, args):
         if not isinstance(args, tuple):
             args = (args,)
-        
+
         if cls.__plugantic_generic_supertype__:
             return cls._require_additional_features(*args)
 
@@ -61,7 +89,7 @@ class PluginModel(BaseModel, _plugin_base):
     def __init_subclass__(cls, *,
         varname_type: str|None=None,
         value: str|None=None,
-        supported_features: set[Any]|tuple[Any, ...]=(),
+        supported_features: set[_PAnyFeat]|tuple[_PAnyFeat, ...]=(),
         required_features: _RequiresFeatureSpec|None=None,
         auto_downcast: bool=False,
         auto_downcasts: PluginDowncastCallbacks|None=None,
@@ -119,12 +147,11 @@ class PluginModel(BaseModel, _plugin_base):
         cls.__plugantic_auto_downcast_callbacks__ = auto_downcasts
 
     @classmethod
-    def _require_additional_features(cls, *features: Any) -> Type[Self]:
+    def _require_additional_features(cls, *features: _PFeatSpec) -> Type[Self]:
         _base = cls.__plugantic_generic_supertype__ or cls
         required_features = cls.__plugantic_required_features__
 
-        features = {item for feature in features for item in cls._unwrap_feature(feature)}
-
+        
         if required_features is None:
             required_features = _RequiresAllFeatures(all_of=features)
         elif isinstance(required_features, _RequiresAllFeatures):
@@ -132,7 +159,7 @@ class PluginModel(BaseModel, _plugin_base):
         else:
             required_features = _RequiresAllFeatures(all_of={required_features, *features})
 
-        supported_features = cls.__plugantic_supported_features__ | features
+        supported_features = cls.__plugantic_supported_features__ | set(features)
 
         return type(_base.__name__, (_base,), {}, supported_features=supported_features, required_features=required_features, _plugantic_generic_supertype=_base, _plugantic_internal_name=f"Require{randint(1000, 9999)}")
 
@@ -169,21 +196,21 @@ class PluginModel(BaseModel, _plugin_base):
         return callback
 
     @classmethod
-    def _unpack_features(cls, *features: Any) -> tuple[_RequiresFeatureSpec, set[Any]]:
-        requires_all_features = set()
-        supports_features = set()
+    def _unpack_features(cls, *features: Any) -> tuple[_RequiresFeatureSpec, set[PluginFeature]]:
+        requires_all_features = set[_PFeatSpec]()
+        supports_features = set[PluginFeature]()
 
         for feature in features:
             if isinstance(feature, _RequiresFeatureSpec):
                 requires_all_features.add(feature)
                 continue
             
-            _any_features = set()
+            _any_features = set[PluginFeature]()
             if get_origin(feature) is Union:
                 for sub_feature in get_args(feature):
-                    _any_features.update(cls._unwrap_feature(sub_feature))
-            if get_origin(feature) is Literal:
-                _any_features.update(get_args(feature))
+                    if not isinstance(sub_feature, PluginFeature):
+                        continue
+                    _any_features.add(sub_feature)
             
             if len(_any_features) == 1:
                 feature = _any_features.pop()
@@ -193,16 +220,13 @@ class PluginModel(BaseModel, _plugin_base):
                 supports_features.update(_any_features)
                 continue
 
+            if not isinstance(feature, PluginFeature):
+                continue
+
             requires_all_features.add(feature)
             supports_features.add(feature)
 
         return _RequiresAllFeatures(all_of=requires_all_features), supports_features
-
-    @classmethod
-    def _unwrap_feature(cls, feature: Any) -> tuple[Any]:
-        if get_origin(feature) is Literal:
-            return get_args(feature)
-        return (feature,)
 
     @classmethod
     def _create_annotation(cls, name: str, value: Any, *, only_set_if_not_exists: bool=False, force_set: bool=False):
@@ -414,10 +438,10 @@ class PluginModel(BaseModel, _plugin_base):
     model_config = {"defer_build": True}
 
 class _RequiresFeatureSpec:
-    def applies_to(self, supported_features: set[Any]) -> bool:
+    def applies_to(self, supported_features: set[_PFeatSpec]) -> bool:
         ...
 
-    def _split_features(self, features: set[Any]) -> tuple[set[Any], set[Self]]:
+    def _split_features(self, features: set[_PFeatSpec]) -> tuple[set[PluginFeature], set[Self]]:
         feats, specs = set(), set()
         for feature in features:
             if isinstance(feature, _RequiresFeatureSpec):
@@ -427,17 +451,17 @@ class _RequiresFeatureSpec:
         return feats, specs
 
 class _RequiresAnyFeature(_RequiresFeatureSpec):
-    def __init__(self, *, any_of: set[Any]):
+    def __init__(self, *, any_of: set[_PFeatSpec]):
         self.any_of_features, self.any_of_specs = self._split_features(any_of)
     
     def applies_to(self, supported_features) -> bool:
         return (not self.any_of_features.isdisjoint(supported_features)) or any(spec.applies_to(supported_features) for spec in self.any_of_specs)
 
 class _RequiresAllFeatures(_RequiresFeatureSpec):
-    def __init__(self, *, all_of: set[Any]):
+    def __init__(self, *, all_of: set[_PFeatSpec]):
         self.all_of_features, self.all_of_specs = self._split_features(all_of)
     
-    def _require_additional_features(self, *features: Any) -> Self:
+    def _require_additional_features(self, *features: _PFeatSpec) -> Self:
         return type(self)(all_of=self.all_of_features | self.all_of_specs | set(features))
 
     def applies_to(self, supported_features) -> bool:
@@ -446,6 +470,10 @@ class _RequiresAllFeatures(_RequiresFeatureSpec):
 class _PluginFeatureFilter:
     def __init__(self, *, required_features: _RequiresFeatureSpec|None=None):
         self.required_features = required_features
+
+PluganticFeatureType = PluginFeature|Type[PluginFeature]
+_PFeatSpec = _RequiresFeatureSpec|PluginFeature
+_PAnyFeat = PluganticFeatureType|_RequiresFeatureSpec
 
 T = TypeVar("T", bound=PluginModel)
 
@@ -456,13 +484,11 @@ class PluginDowncastHandler(Generic[T]):
     def get_raw_type(self) -> Type[T]:
         return self.wraps
 
-    def enable_feature(self, feature: Any):
-        features = self.wraps._unwrap_feature(feature)
-        self.wraps.__plugantic_supported_features__.update(features)
+    def enable_feature(self, feature: PluganticFeatureType):
+        self.wraps.__plugantic_supported_features__.add(feature)
     
-    def disable_feature(self, feature: Any):
-        for item in self.wraps._unwrap_feature(feature):
-            self.wraps.__plugantic_supported_features__.discard(item)
+    def disable_feature(self, feature: PluganticFeatureType):
+        self.wraps.__plugantic_supported_features__.discard(feature)
 
     def copy_and_update_field(self, name: str, other: FieldInfo):
         """Copy the field from the parent class and update it with the given kwargs"""

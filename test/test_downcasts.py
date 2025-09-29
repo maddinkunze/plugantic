@@ -1,11 +1,11 @@
 from typing_extensions import Literal, TypeAlias
-from plugantic import PluginModel, PluginDowncastHandler
+from plugantic import PluginModel, PluginDowncastHandler, PluginFeature
 from pydantic import BaseModel
 
 def test_auto_downcasts():
-    Feature1: TypeAlias = Literal["feature1"]
-    Feature2: TypeAlias = Literal["feature2"]
-    Feature3: TypeAlias = Literal["feature3"]
+    Feature1: TypeAlias = PluginFeature["feature1"]
+    Feature2: TypeAlias = PluginFeature["feature2"]
+    Feature3: TypeAlias = PluginFeature["feature3"]
 
     class TestBase(PluginModel):
         pass

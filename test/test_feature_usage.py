@@ -1,10 +1,10 @@
 from typing_extensions import Literal, TypeAlias
-from plugantic import PluginModel
+from plugantic import PluginModel, PluginFeature
 from pydantic import BaseModel
 
 def test_feature_usage_subclass_getitem():
-    Feature1: TypeAlias = Literal["feature1"]
-    Feature2: TypeAlias = Literal["feature2"]
+    Feature1: TypeAlias = PluginFeature["feature1"]
+    Feature2: TypeAlias = PluginFeature["feature2"]
     
     class TestBase(PluginModel):
         value: str
@@ -100,9 +100,9 @@ def test_feature_usage_subclass_getitem():
 
 
 def test_feature_usage_oneof():
-    Feature1: TypeAlias = Literal["feature1"]
-    Feature2: TypeAlias = Literal["feature2"]
-    Feature3: TypeAlias = Literal["feature3"]
+    Feature1: TypeAlias = PluginFeature["feature1"]
+    Feature2: TypeAlias = PluginFeature["feature2"]
+    Feature3: TypeAlias = PluginFeature["feature3"]
     
     class TestBase(PluginModel):
         value: str
@@ -122,11 +122,8 @@ def test_feature_usage_oneof():
     
     class OtherConfig1(BaseModel):
         config: TestBase[Feature1|Feature2]
-    
-    class OtherConfig2(BaseModel):
-        config: TestBase[Literal["feature1", "feature2"]]
 
-    class OtherConfig3(BaseModel):
+    class OtherConfig2(BaseModel):
         config: TestBase[Feature1|Feature2, Feature3]
     
 
@@ -149,29 +146,9 @@ def test_feature_usage_oneof():
         "type": "test4",
         "value": "some value",
     }})
-    
-    OtherConfig2.model_validate({"config": {
-        "type": "test1",
-        "value": "some value",
-    }})
-    
-    OtherConfig2.model_validate({"config": {
-        "type": "test2",
-        "value": "some value",
-    }})
-    
-    OtherConfig2.model_validate({"config": {
-        "type": "test3",
-        "value": "some value",
-    }})
-
-    OtherConfig2.model_validate({"config": {
-        "type": "test4",
-        "value": "some value",
-    }})
 
     try:
-        OtherConfig3.model_validate({"config": {
+        OtherConfig2.model_validate({"config": {
             "type": "test1",
             "value": "some value",
         }})
@@ -182,7 +159,7 @@ def test_feature_usage_oneof():
         pass
 
     try:
-        OtherConfig3.model_validate({"config": {
+        OtherConfig2.model_validate({"config": {
             "type": "test2",
             "value": "some value",
         }})
@@ -193,7 +170,7 @@ def test_feature_usage_oneof():
         pass
 
     try:
-        OtherConfig3.model_validate({"config": {
+        OtherConfig2.model_validate({"config": {
             "type": "test3",
             "value": "some value",
         }})
@@ -203,15 +180,15 @@ def test_feature_usage_oneof():
     except:
         pass
 
-    OtherConfig3.model_validate({"config": {
+    OtherConfig2.model_validate({"config": {
         "type": "test4",
         "value": "some value",
     }})
 
 def test_feature_usage_mixed():
-    Feature1: TypeAlias = Literal["feature1"]
-    Feature2: TypeAlias = Literal["feature2"]
-    Feature3: TypeAlias = Literal["feature3"]
+    Feature1: TypeAlias = PluginFeature["feature1"]
+    Feature2: TypeAlias = PluginFeature["feature2"]
+    Feature3: TypeAlias = PluginFeature["feature3"]
     
     class TestBase(PluginModel):
         value: str

@@ -1,10 +1,10 @@
 from typing_extensions import Literal
-from plugantic import PluginModel, PluginDowncastHandler
+from plugantic import PluginModel, PluginDowncastHandler, PluginFeature
 from pydantic import BaseModel
 
 def test_recursive_annotation():
-    Feature1 = Literal["feature1"]
-    Feature2 = Literal["feature2"]
+    Feature1 = PluginFeature["feature1"]
+    Feature2 = PluginFeature["feature2"]
     
     class TestBase(PluginModel):
         pass
@@ -50,8 +50,8 @@ def test_recursive_annotation():
     SomeConfig2.model_validate({"config": {"type": "recursive", "test": {"type": "test2"}}})
 
 def test_mutual_exclusive_recursive_annotation():
-    Feature1 = Literal["feature1"]
-    Feature2 = Literal["feature2"]
+    Feature1 = PluginFeature["feature1"]
+    Feature2 = PluginFeature["feature2"]
     
     class TestBase(PluginModel):
         pass

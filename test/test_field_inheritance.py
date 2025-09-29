@@ -1,11 +1,9 @@
 from typing_extensions import Literal
-from plugantic import PluginModel, PluginDowncastHandler
+from plugantic import PluginModel, PluginDowncastHandler, PluginFeature
 from pydantic import BaseModel, Field
 
-from plugantic.plugin import _PluginFeatureFilter
-
 def test_missing_field_inheritance():
-    Feature = Literal["feature1"]
+    Feature = PluginFeature["feature1"]
 
     def enable_feature(handler: PluginDowncastHandler):
         handler.enable_feature(Feature)
@@ -37,7 +35,7 @@ def test_missing_field_inheritance():
         pass
 
 def test_enable_field_inheritance():
-    Feature = Literal["feature1"]
+    Feature = PluginFeature["feature1"]
 
     def enable_feature(handler: PluginDowncastHandler):
         handler.enable_feature(Feature)

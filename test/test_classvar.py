@@ -1,9 +1,9 @@
 from typing_extensions import Literal, ClassVar
-from plugantic import PluginModel, PluginDowncastHandler
+from plugantic import PluginModel, PluginDowncastHandler, PluginFeature
 from pydantic import BaseModel, Field
 
 def test_classvar():
-    Feature = Literal["feature1"]
+    Feature = PluginFeature["feature1"]
 
     def enable_feature(handler: PluginDowncastHandler):
         handler.enable_feature(Feature)
