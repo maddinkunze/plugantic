@@ -17,9 +17,12 @@ if TYPE_CHECKING:
     _feature_base = Generic[F]
 else:
     _plugin_base = _VanishBase
-    _feature_base = _VanishBase
+    _feature_base = type
 
 class PluginFeature(_feature_base):
+    def __new__(cls, value: Any):
+        return super().__new__(cls, f"{cls.__name__}[{value}]", (cls,), {})
+
     def __init__(self, value: Any):
         self._value = value
 

@@ -38,3 +38,7 @@ def test_classvar():
     }})
 
     assert v.config.test == 2
+
+def test_feature_classvar():
+    Feature = PluginFeature["feature1"]
+    ClassVar[Feature] # should not throw an error
