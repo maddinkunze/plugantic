@@ -1,12 +1,12 @@
 from typing_extensions import ClassVar, Type, Self, Literal, Any, TypedDict, TypeVar, Set, Self, get_type_hints, get_origin, get_args
-from pydantic import BaseModel, GetCoreSchemaHandler, Field
+from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import tagged_union_schema, union_schema
 
 
-class PluganticConfig(TypedDict):
-    varname_type: str|None = None
-    value: str|None = None
+class PluganticConfigDict(ConfigDict, total=False):
+    varname_type: str
+    value: str
 
 _T1 = TypeVar("_T1")
 _T2 = TypeVar("_T2")
@@ -41,7 +41,7 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
     __plugantic_was_schema_created__: ClassVar[bool] = False
     __plugantic_check_schema_usage__: ClassVar[bool] = True
     
-    plugantic_config: ClassVar[PluganticConfig|None] = None
+    model_config: ClassVar[PluganticConfigDict] = PluganticConfigDict()
 
     def __init__(self, *args, **kwargs):
         declared_type = self._get_declared_type()
