@@ -1,5 +1,5 @@
-from typing_extensions import ClassVar, Type, Self, Literal, Any, TypedDict, TypeVar, Set, Self, get_type_hints, get_origin, get_args
-from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict
+from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Self, get_type_hints, get_origin, get_args
+from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import tagged_union_schema, union_schema
 
@@ -7,6 +7,8 @@ from pydantic_core.core_schema import tagged_union_schema, union_schema
 class PluganticConfigDict(ConfigDict, total=False):
     varname_type: str
     value: str
+    auto_downcast: bool
+    downcast_order: int
 
 _T1 = TypeVar("_T1")
 _T2 = TypeVar("_T2")
@@ -38,6 +40,8 @@ class PluganticModelMeta(type(BaseModel)):
 
 class PluginModel(BaseModel, metaclass=PluganticModelMeta):
     __plugantic_varname_type__: ClassVar[str] = "type"
+    __plugantic_auto_downcast__: ClassVar[bool] = True
+    __plugantic_downcast_order__: ClassVar[int|None] = None
     __plugantic_was_schema_created__: ClassVar[bool] = False
     __plugantic_check_schema_usage__: ClassVar[bool] = True
     
@@ -55,17 +59,25 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
     def __init_subclass__(cls, *,
         varname_type: str|None=None,
         value: str|None=None,
+        auto_downcast: bool|None=None,
+        downcast_order: int|None=None,
     **kwargs):
         if cls._check_plugantic_schema_usage():
             raise ValueError(f"Schema of {cls.__name__} has already been created. Creating new subclasses after the schema has been created will lead to undefined behaviour.")
 
         super().__init_subclass__(**kwargs)
 
-        if cls.plugantic_config:
-            varname_type = cls.plugantic_config.get("varname_type", None) or varname_type
-            value = cls.plugantic_config.get("value", None) or value
+        if cls.model_config:
+            varname_type = cls.model_config.get("varname_type", None) or varname_type
+            value = cls.model_config.get("value", None) or value
+            auto_downcast = cls.model_config.get("auto_downcast", None) or auto_downcast
+            downcast_order = cls.model_config.get("downcast_order", None) or downcast_order
 
         cls.__plugantic_was_schema_created__ = False
+        cls.__plugantic_downcast_order__ = downcast_order
+
+        if auto_downcast is not None:
+            cls.__plugantic_auto_downcast__ = auto_downcast
 
         if varname_type is not None:
             cls.__plugantic_varname_type__ = varname_type
@@ -173,16 +185,40 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
         for subcls in subclasses:
             subcls._mark_schame_created()
 
+        choices = dict[str, Type[Self]]()
+
+        for subcls in subclasses:
+            type_ = subcls._get_declared_type()
+            existing = choices.get(type_, None)
+            if existing:
+                subcls = existing.__plugantic_order__(subcls)
+            choices[type_] = subcls
+
         choices = {
-            subcls._get_declared_type(): handler(subcls)
-            for subcls in subclasses
+            type_: handler(subcls)
+            for type_, subcls in choices.items()
         }
+        
         return tagged_union_schema(choices, discriminator=cls.__plugantic_varname_type__)
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
         cls._mark_schame_created()
         return cls._as_tagged_union(handler)
+
+    @classmethod
+    def __plugantic_order__(cls, other: Type[Self]) -> Type[Self]:
+        if cls.__plugantic_downcast_order__ is not None and other.__plugantic_downcast_order__ is not None:
+            if cls.__plugantic_downcast_order__ < other.__plugantic_downcast_order__:
+                return cls
+            return other
+
+        if other in cls.mro():
+            return other
+        if cls in other._get_valid_subclasses():
+            return other
+        
+        return cls
 
     @classmethod
     def _mark_schame_created(cls) -> None:
@@ -202,6 +238,17 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
             if supcls.__plugantic_was_schema_created__:
                 return True
         return False
+
+    @model_validator(mode="wrap")
+    def _try_downcast(cls, data, handler):
+        if isinstance(data, cls):
+            pass
+        elif cls.__plugantic_auto_downcast__ and issubclass(cls, type(data)):
+            try:
+                data = cls(**data.model_dump())
+            except Exception as e:
+                raise ValueError(f"Failed to downcast given {repr(data)} to required {cls.__name__}; please provide the required config directly") from e
+        return handler(data)
     
     model_config = {"defer_build": True}
 
@@ -238,11 +285,21 @@ class PluganticCombinedModel:
             subcls._mark_schame_created()
             return handler(subcls)
         
-        choices = dict[str, dict[str, Any]]()
+        choices = dict[str, dict[str, Type[PluginModel]]]()
         for subcls in subclasses:
             subcls._mark_schame_created()
-            choices.setdefault(subcls.__plugantic_varname_type__, {})[subcls._get_declared_type()] = handler(subcls)
-        
+            varname = subcls.__plugantic_varname_type__
+            type_ = subcls._get_declared_type()
+            existing = choices.setdefault(varname, {}).get(type_, None)
+            if existing:
+                subcls = existing.__plugantic_order__(subcls)
+            choices[varname][type_] = subcls
+
+        choices = {
+            varname: {type_: handler(subcls) for type_, subcls in types.items()}
+            for varname, types in choices.items()
+        }
+
         unions = [
             tagged_union_schema(c, discriminator=d) for d, c in choices.items()
         ]
