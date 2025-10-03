@@ -12,25 +12,25 @@ _T1 = TypeVar("_T1")
 _T2 = TypeVar("_T2")
 
 class PluganticModelMeta(type(BaseModel)):
-    def __and__(cls: _T1, other: _T2) -> _T1|_T2:
+    def __and__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
         if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
             return PluganticCombinedAnd(cls, other)
 
         return super().__and__(other)
 
-    def __rand__(cls: _T1, other: _T2) -> _T1|_T2:
+    def __rand__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
         if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
             return PluganticCombinedAnd(other, cls)
 
         return super().__rand__(other)
 
-    def __or__(cls: _T1, other: _T2) -> _T1|_T2:
+    def __or__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
         if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
             return PluganticCombinedOr(cls, other)
 
         return super().__or__(other)
 
-    def __ror__(cls: _T1, other: _T2) -> _T1|_T2:
+    def __ror__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
         if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
             return PluganticCombinedOr(other, cls)
 
@@ -166,7 +166,12 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
     def _as_tagged_union(cls, handler: GetCoreSchemaHandler):
         subclasses = set(cls._get_valid_subclasses())
         if len(subclasses) == 1:
-            return handler(subclasses.pop())
+            subcls = subclasses.pop()
+            subcls._mark_schame_created()
+            return handler(subcls)
+
+        for subcls in subclasses:
+            subcls._mark_schame_created()
 
         choices = {
             subcls._get_declared_type(): handler(subcls)
@@ -176,9 +181,13 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
-        cls.__plugantic_was_schema_created__ = True
+        cls._mark_schame_created()
         return cls._as_tagged_union(handler)
 
+    @classmethod
+    def _mark_schame_created(cls) -> None:
+        cls.__plugantic_was_schema_created__ = True
+        
     @classmethod
     def _check_plugantic_schema_usage(cls) -> bool:
         """
@@ -225,10 +234,13 @@ class PluganticCombinedModel:
     def __get_pydantic_core_schema__(self, source, handler: GetCoreSchemaHandler):
         subclasses = set(self._get_valid_subclasses())
         if len(subclasses) == 1:
-            return handler(subclasses.pop())
+            subcls = subclasses.pop()
+            subcls._mark_schame_created()
+            return handler(subcls)
         
         choices = dict[str, dict[str, Any]]()
         for subcls in subclasses:
+            subcls._mark_schame_created()
             choices.setdefault(subcls.__plugantic_varname_type__, {})[subcls._get_declared_type()] = handler(subcls)
         
         unions = [
