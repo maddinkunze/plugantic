@@ -21,13 +21,27 @@ else:
 
 class PluginFeature(_feature_base):
     def __new__(cls, value: Any):
-        return super().__new__(cls, f"{cls.__name__}[{value}]", (cls,), {})
+        if isinstance(value, PluginFeature):
+            return value
+        
+        return super().__new__(cls, f"{cls.__name__}[{cls._format_value(value)}]", (cls,), {})
 
     def __init__(self, value: Any):
         self._value = value
 
     def __class_getitem__(cls, value: Any):
         return cls(value)
+
+    @staticmethod
+    def _format_value(value: Any):
+        if not isinstance(value, (list, tuple)):
+            value = (value,)
+        
+        value = (val if not isinstance(val, PluginFeature) else val._value for val in value)
+        value = (val if not isinstance(val, type) else val.__name__ for val in value)
+        value = (repr(val) for val in value)
+
+        return ", ".join(value)
 
     @staticmethod
     def _get_other(other: Any):
