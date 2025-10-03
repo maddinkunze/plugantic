@@ -97,15 +97,15 @@ def test_basic_usage_subclass_config():
         
     class TestImplText(TestBase):
         text: str
-        plugantic_config = {"value": "text"}
+        model_config = {"value": "text"}
         
     class TestImplNumber(TestBase):
         number: int|None = None
-        plugantic_config = {"value": "number"}
+        model_config = {"value": "number"}
         
     class TestImplNumberStrict(TestImplNumber):
         number: int = 0
-        plugantic_config = {"value": "number-strict"}
+        model_config = {"value": "number-strict"}
         
     class OtherConfig(BaseModel):
         config: TestBase
