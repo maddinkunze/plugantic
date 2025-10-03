@@ -99,7 +99,7 @@ CommonConfig.model_validate({"output": {
 Let's say you have the following logger:
 
 ```python
-FeatureNewPage = Literal["newline"]
+FeatureNewPage = PluginFeature["newline"]
 
 class LoggerBase(PluginModel):
     def log_line(self, line: str, new_page: bool=False): ...
