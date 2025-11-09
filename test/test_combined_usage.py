@@ -34,13 +34,13 @@ def test_combined_usage():
         config: Feature1
 
     class Config3(BaseModel):
-        config: Feature1 & Feature2
+        config: Feature1 & Feature2 # type: ignore[operator]
         
     class Config4(BaseModel):
         config: Feature1 | Feature3
 
     class Config5(BaseModel):
-        config: (Feature1 & Feature2) | Feature3
+        config: (Feature1 & Feature2) | Feature3 # type: ignore[operator]
 
     Config1.model_validate({"config": {"type": "impl1"}})
     Config2.model_validate({"config": {"type": "impl1"}})

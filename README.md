@@ -94,57 +94,6 @@ CommonConfig.model_validate({"output": {
 
 ## ✨ Features
 
-### 🌀 Automatic Downcasts
-
-Let's say you have the following logger:
-
-```python
-FeatureNewPage = PluginFeature["newline"]
-
-class LoggerBase(PluginModel):
-    def log_line(self, line: str, new_page: bool=False): ...
-
-class LoggerStdout(LoggerBase, value="stdout"):
-    new_page_token: str|None = None
-    def log_line(self, line: str, new_page: bool=False):
-        if new_page:
-            if not self.new_page_token:
-                raise ValueError("new_page_token is not set")
-            print(self.new_page_token)
-        print(line)
-
-class Component1(BaseModel):
-    logger: LoggerBase
-
-class Component2(BaseModel):
-    logger: LoggerBase[FeatureNewPage]
-```
-
-then users could not use `Component2` with `LoggerStdout` as it does not support the `FeatureNewPage` feature, even thoudh `LoggerStdout` would support it, if `new_page_token: str` was enforced.
-
-Conventionally, this would require the developer to create two classes (i.e. `LoggerStdout` and `LoggerStdoutNewPage`) and then include either one in the final annotated union depending on if the component requires the new page functionality.
-
-With `plugantic`, you can automatically create subtypes that are more strict than the base type and they will be automatically validated and downcast when using the model:
-
-```python
-def ensure_new_page_feature(handler: PluginDowncastHandler):
-    handler.enable_feature(FeatureNewPage)
-    handler.set_field_annotation("new_page_token", str)
-    handler.remove_field_default("new_page_token")
-
-class LoggerBase(PluginModel, value="stdout", auto_downcasts=(ensure_new_page_feature,)):
-    new_page_token: str|None = None
-    def log_line(self, line: str, new_page: bool=False):
-        if new_page:
-            if not self.new_page_token:
-                raise ValueError("new_page_token is not set")
-            print(self.new_page_token)
-        print(line)
-```
-
-By declaring multiple callbacks in `auto_downcasts`, you can create a superset of all possible downcasts and `plugantic` will automatically select the least strict depending on which features you require.
-
-
 ### 🔌 Extensibility
 
 You can add new plugins after the fact!
@@ -184,10 +133,132 @@ class CommonConfig(BaseModel):
     model_config = {"defer_build": True}
 ```
 
+
+### 🚦 Intersection Types
+
+TL;DR: Plugantic introduces a `value: Model1 & Model2` type annotation
+
+Sometimes, you want to have the same base interface and then some interfaces built on top of that, with slightly different features.
+
+For example you could imaging the following:
+
+```python
+class Logger(PluginModel):
+    def log(self, text: str): ...
+
+class LoggerWithColors(Logger):
+    def change_color(self, color: str): ...
+
+class LoggerWithEmojis(Logger):
+    def log_emoji(self, emoji: str): ...
+```
+
+Due to multiple inheritance in python, it is easy to define a class that supports both features:
+
+```python
+class StdoutLogger(LoggerWithColors, LoggerWithEmojis):
+    def log(self, text):
+        ...
+    def change_color(self, color):
+        ...
+    def log_emoji(self, emoji):
+        ...
+```
+
+However, you cannot easily declare a type annotation in python that requires both features. You would wish that something like this existed in python (and plugantic introduces it):
+
+```python
+class SomeOtherConfig(BaseModel):
+    logger: LoggerWithColor & LoggerWithEmojis
+```
+
+Note, that this will break with most type checkers, as this is not a valid type annotation in python. It does work at runtime though and it is very obvious what this syntax means. You can use `# type: ignore[operator]` to the end of the type annotation to stop the warnings about the incorrect type annotation from your linter.
+
+
 ### 📝 Type Checker Friendliness
 
 The type checker can infer the type of the plugin model, so you don't need to define a union type or a discriminator field!
-Everything except for the annotated union is based on pydantic and as such can be used like before as type checkers are already familiar with pydantic.
+Everything except for the annotated union and the intersection types is based on pydantic and as such can be used like before as type checkers are already familiar with pydantic.
+
+### 🌀 Automatic Downcasts
+
+Let's say you have the following logger:
+
+```python
+class LoggerBase(PluginModel):
+    def log_line(self, line: str): ...
+
+class LoggerWithPages(LoggerBase):
+    def log_line(self, line: str, new_page: bool=False): ...
+
+class LoggerStdout(LoggerBase, value="stdout"):
+    new_page_token: str|None = None
+    def log_line(self, line: str, new_page: bool=False):
+        if new_page:
+            if not self.new_page_token:
+                raise ValueError("new_page_token is not set")
+            print(self.new_page_token)
+        print(line)
+
+class Component1(BaseModel):
+    logger: LoggerBase
+
+class Component2(BaseModel):
+    logger: LoggerWithPages
+```
+
+then users could not use `Component2` with `LoggerStdout` as it does not support (i.e. does not implement) the pages feature, even thoudh `LoggerStdout` would support it, if `new_page_token: str` was enforced.
+
+Conventionally, this would require the developer to create two classes (i.e. `LoggerStdout` and `LoggerStdoutNewPage`) and then include either one in the final annotated union depending on if the component requires the new page functionality.
+
+With `plugantic`, you can automatically create subtypes that are more strict than the base type and they will be automatically validated and downcast when using the model:
+
+```python
+class LoggerStdout(LoggerBase, value="stdout"):
+    new_page_token: str|None = None
+    def log_line(self, line: str, new_page: bool=False):
+        if new_page:
+            if not self.new_page_token:
+                raise ValueError("new_page_token is not set")
+            print(self.new_page_token)
+        print(line)
+
+class LoggerStdoutWithPages(LoggerStdout, LoggerWithPages):
+    new_page_token: str
+    # all the functionality is declared in the base class, we just add some type enforcements
+```
+
+If you have multiple features, that may need to be supported individually, you can automate these typed subclasses:
+
+```python
+class LoggerBase(PluginModel): ...
+class LoggerWithPages(LoggerBase): ...
+class LoggerWithColors(LoggerBase): ...
+
+class LoggerStdout(LoggerBase, value="stdout"):
+    new_page_token: str|None = None
+    color: str|None = None
+
+combinations = [(LoggerWithPages,), (LoggerWithColors,), (LoggerWithPages, LoggerWithColors)] # all the combinations we want to create; could be automated using itertools
+for parents in combinations:
+    class _(LoggerStdout, *parents):
+        if LoggerWithPages in parents:
+            new_page_token: str # add strict requirements for new page feature
+        if LoggerWithColors in parents:
+            color: str # add strict requirements for color feature
+```
+
+In these cases, you will not have type checker support for instantiating the classes using python, but plugantic will automatically downcast a valid parent class to the correct subclass. So the following is valid, even though `LoggerStdout` itself does not inherit from `LoggerWithColors` (because there is a subclass of `LoggerStdout` that _does_ inherit from `LoggerWithColors` _and_ has the same identifier "stdout")
+
+```python
+class SomeConfig(BaseModel):
+    logger: LoggerWithColors
+
+SomeConfig.model_validate({
+    "logger": LoggerStdout(color="#801212")
+})
+```
+
 
 ## 🏛️ Leading Principles
 
@@ -220,7 +291,7 @@ Most of the actual logic is in the `src/plugantic/plugin.py` file.
 To build the package, you can do the following:
 
 ```bash
-uv run build
+uv build
 ```
     
 <details>
