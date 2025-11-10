@@ -138,7 +138,7 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
         annotation = None
         try:
             annotation = get_type_hints(cls).get(name, None)
-        except NameError:
+        except (NameError, TypeError):
             pass
         if not annotation:
             field = cls.model_fields.get(name, None)
