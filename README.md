@@ -300,7 +300,7 @@ uv build
 > 💡 This section is primarily relevant for the maintainers of this package (me), as it requires permission to push a package to the `plugantic` repository on PyPI.
 
 ```bash
-uv run publish --token <token>
+uv publish --token <token>
 ```
 
 </details>
