@@ -1,4 +1,4 @@
-from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Self, get_type_hints, get_origin, get_args
+from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Self, get_type_hints, get_origin, get_args, TYPE_CHECKING
 from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import tagged_union_schema, union_schema
@@ -47,14 +47,15 @@ class PluginModel(BaseModel, metaclass=PluganticModelMeta):
     
     model_config: ClassVar[PluganticConfigDict] = PluganticConfigDict()
 
-    def __init__(self, *args, **kwargs):
-        declared_type = self._get_declared_type()
-        if declared_type:
-            kwargs = {
-                self.__plugantic_varname_type__: declared_type,
-                **kwargs
-            }
-        super().__init__(*args, **kwargs)
+    if not TYPE_CHECKING:
+        def __init__(self, *args, **kwargs):
+            declared_type = self._get_declared_type() # inject the default discriminator value if not provided
+            if declared_type:
+                kwargs = {
+                    self.__plugantic_varname_type__: declared_type,
+                    **kwargs
+                }
+            super().__init__(*args, **kwargs)
 
     def __init_subclass__(cls, *,
         varname_type: str|None=None,
