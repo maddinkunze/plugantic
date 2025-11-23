@@ -37,8 +37,13 @@ class PluganticModelMeta(type(BaseModel)):
             return PluganticCombinedOr(other, cls)
 
         return super().__ror__(other)
+    
+if TYPE_CHECKING:
+    _PluginModelMeta = type(BaseModel)
+else:
+    _PluginModelMeta = PluganticModelMeta
 
-class PluginModel(BaseModel, metaclass=PluganticModelMeta):
+class PluginModel(BaseModel, metaclass=_PluginModelMeta):
     __plugantic_varname_type__: ClassVar[str] = "type"
     __plugantic_auto_downcast__: ClassVar[bool] = True
     __plugantic_downcast_order__: ClassVar[int|None] = None
