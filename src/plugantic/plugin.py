@@ -1,4 +1,4 @@
-from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Self, get_type_hints, get_origin, get_args, TYPE_CHECKING
+from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, get_type_hints, get_origin, get_args, TYPE_CHECKING
 from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import tagged_union_schema, union_schema
@@ -15,28 +15,24 @@ _T2 = TypeVar("_T2")
 
 class PluganticModelMeta(type(BaseModel)):
     def __and__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
-            return PluganticCombinedAnd(cls, other)
-
-        return super().__and__(other)
+        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
+            return PluganticCombinedAnd(cls, other) # pyright: ignore[reportReturnType]
+        return NotImplemented
 
     def __rand__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
-            return PluganticCombinedAnd(other, cls)
-
-        return super().__rand__(other)
+        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
+            return PluganticCombinedAnd(other, cls) # pyright: ignore[reportReturnType]
+        return NotImplemented
 
     def __or__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
-            return PluganticCombinedOr(cls, other)
-
-        return super().__or__(other)
+        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
+            return PluganticCombinedOr(cls, other) # pyright: ignore[reportReturnType]
+        return NotImplemented
 
     def __ror__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel):
-            return PluganticCombinedOr(other, cls)
-
-        return super().__ror__(other)
+        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
+            return PluganticCombinedOr(other, cls) # pyright: ignore[reportReturnType]
+        return NotImplemented
     
 if TYPE_CHECKING:
     _PluginModelMeta = type(BaseModel)
@@ -50,7 +46,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
     __plugantic_was_schema_created__: ClassVar[bool] = False
     __plugantic_check_schema_usage__: ClassVar[bool] = True
     
-    model_config: ClassVar[PluganticConfigDict] = PluganticConfigDict()
+    model_config: ClassVar[ConfigDict|PluganticConfigDict] = PluganticConfigDict(defer_build=True)
 
     if not TYPE_CHECKING:
         def __init__(self, *args, **kwargs):
@@ -185,11 +181,11 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         subclasses = set(cls._get_valid_subclasses())
         if len(subclasses) == 1:
             subcls = subclasses.pop()
-            subcls._mark_schame_created()
+            subcls._mark_schema_created()
             return handler(subcls)
 
         for subcls in subclasses:
-            subcls._mark_schame_created()
+            subcls._mark_schema_created()
 
         choices = dict[str, Type[Self]]()
 
@@ -209,7 +205,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
 
     @classmethod
     def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
-        cls._mark_schame_created()
+        cls._mark_schema_created()
         return cls._as_tagged_union(handler)
 
     @classmethod
@@ -227,7 +223,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         return cls
 
     @classmethod
-    def _mark_schame_created(cls) -> None:
+    def _mark_schema_created(cls) -> None:
         cls.__plugantic_was_schema_created__ = True
         
     @classmethod
@@ -246,6 +242,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         return False
 
     @model_validator(mode="wrap")
+    @classmethod
     def _try_downcast(cls, data, handler):
         if isinstance(data, cls):
             pass
@@ -255,47 +252,49 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
             except Exception as e:
                 raise ValueError(f"Failed to downcast given {repr(data)} to required {cls.__name__}; please provide the required config directly") from e
         return handler(data)
-    
-    model_config = {"defer_build": True}
 
 class PluganticCombinedModel:
-    def __init__(self, *args: "PluganticCombinedModel|type[PluginModel]"):
+    def __init__(self, *args: "PluganticCombinedModel|Type[PluginModel]"):
         self.items = args
     
-    def _get_valid_subclasses(self) -> Set[type[PluginModel]]: ...
+    def _get_valid_subclasses(self) -> Set[Type[PluginModel]]: ...
 
     def __and__(self, other: Type):
         if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
             return PluganticCombinedAnd(self, other)
-        return super().__and__(other)
+        return NotImplemented
 
     def __rand__(self, other):
         if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
             return PluganticCombinedAnd(other, self)
-        return super().__rand__(other)
+        return NotImplemented
 
     def __or__(self, other):
         if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
             return PluganticCombinedOr(self, other)
-        return super().__or__(other)
+        return NotImplemented
 
     def __ror__(self, other):
         if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
             return PluganticCombinedOr(other, self)
-        return super().__ror__(other)
+        return NotImplemented
 
     def __get_pydantic_core_schema__(self, source, handler: GetCoreSchemaHandler):
         subclasses = set(self._get_valid_subclasses())
         if len(subclasses) == 1:
             subcls = subclasses.pop()
-            subcls._mark_schame_created()
+            subcls._mark_schema_created()
             return handler(subcls)
         
         choices = dict[str, dict[str, Type[PluginModel]]]()
         for subcls in subclasses:
-            subcls._mark_schame_created()
+            subcls._mark_schema_created()
             varname = subcls.__plugantic_varname_type__
+            if varname is None:
+                continue
             type_ = subcls._get_declared_type()
+            if type_ is None:
+                continue
             existing = choices.setdefault(varname, {}).get(type_, None)
             if existing:
                 subcls = existing.__plugantic_order__(subcls)
@@ -306,7 +305,7 @@ class PluganticCombinedModel:
             for varname, types in choices.items()
         }
 
-        unions = [
+        unions: list = [
             tagged_union_schema(c, discriminator=d) for d, c in choices.items()
         ]
 
