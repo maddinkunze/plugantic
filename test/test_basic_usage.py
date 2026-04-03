@@ -1,5 +1,5 @@
 from typing_extensions import Literal
-from plugantic import PluginModel
+from plugantic import PluginModel, Field
 from pydantic import BaseModel
 
 def test_basic_usage_subclass_args():
@@ -13,7 +13,7 @@ def test_basic_usage_subclass_args():
         number: int|None = None
 
     class TestImplNumberStrict(TestImplNumber, value="number-strict"):
-        number: int = 0
+        number: int = 0 # pyright: ignore[reportIncompatibleVariableOverride]
 
     class OtherConfig(BaseModel):
         config: TestBase
@@ -50,7 +50,7 @@ def test_basic_usage_subclass_annotated():
         value: str
         
     class TestImplText(TestBase):
-        type: Literal["text"]
+        type: Literal["text"] = Field(default=...)
         text: str
         
     class TestImplNumber(TestBase):
@@ -58,15 +58,15 @@ def test_basic_usage_subclass_annotated():
         number: int|None = None
         
     class TestImplNumberStrict(TestImplNumber):
-        type: Literal["number-strict"]
-        number: int = 0
+        type: Literal["number-strict"] # pyright: ignore[reportIncompatibleVariableOverride]
+        number: int = 0 # pyright: ignore[reportIncompatibleVariableOverride]
         
     class OtherConfig(BaseModel):
         config: TestBase
         
     OtherConfig(config=TestImplText(value="some text", text="other text"))
-    OtherConfig(config=TestImplNumber(value="some number"))
-    OtherConfig(config=TestImplNumberStrict(value="strict number", number=3))
+    OtherConfig(config=TestImplNumber(value="some number")) # pyright: ignore[reportCallIssue]
+    OtherConfig(config=TestImplNumberStrict(value="strict number", number=3)) # pyright: ignore[reportCallIssue]
     
     c1 = OtherConfig.model_validate({"config": {
         "type": "text",
@@ -104,7 +104,7 @@ def test_basic_usage_subclass_config():
         model_config = {"value": "number"}
         
     class TestImplNumberStrict(TestImplNumber):
-        number: int = 0
+        number: int = 0 # pyright: ignore[reportIncompatibleVariableOverride]
         model_config = {"value": "number-strict"}
         
     class OtherConfig(BaseModel):

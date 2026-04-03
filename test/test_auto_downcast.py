@@ -1,5 +1,5 @@
 from typing import Literal
-from plugantic import PluginModel
+from plugantic import PluginModel, Field
 from pydantic import BaseModel
 
 def test_auto_downcast():
@@ -10,11 +10,11 @@ def test_auto_downcast():
         pass
 
     class Impl1(Base):
-        type: Literal["impl1"]
+        type: Literal["impl1"] = Field(default=...)
         value: str|None
 
     class Impl2(Impl1, Feature1):
-        value: str
+        value: str # pyright: ignore[reportIncompatibleVariableOverride]
 
     class Impl3(Impl1):
         pass
