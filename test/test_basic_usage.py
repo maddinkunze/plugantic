@@ -137,3 +137,58 @@ def test_basic_usage_subclass_config():
     assert not isinstance(c2.config, TestImplNumberStrict)
     assert isinstance(c3.config, TestImplNumberStrict)
 
+def test_basic_usage_multiple_values():
+    class TestBase(PluginModel, varname_type="type"):
+        pass
+
+    class TestImplText(TestBase, value=["text", "str"]):
+        text: str
+
+    class TestImplNumber(TestBase):
+        number: int
+        model_config = {"value": ["number", "num"]}
+
+    class TestImplEmpty(TestBase):
+        type: Literal["empty", "none"] = Field(default=...)
+
+    class OtherConfig(BaseModel):
+        config: TestBase
+
+    OtherConfig(config=TestImplText(text="other text"))
+    OtherConfig(config=TestImplNumber(number=3))
+    OtherConfig(config=TestImplEmpty())
+
+    c1 = OtherConfig.model_validate({"config": {
+        "type": "text",
+        "text": "some text",
+    }})
+
+    c2 = OtherConfig.model_validate({"config": {
+        "type": "str",
+        "text": "other text",
+    }})
+
+    c3 = OtherConfig.model_validate({"config": {
+        "type": "number",
+        "number": 3,
+    }})
+
+    c4 = OtherConfig.model_validate({"config": {
+        "type": "num",
+        "number": 3,
+    }})
+
+    c5 = OtherConfig.model_validate({"config": {
+        "type": "empty",
+    }})
+
+    c6 = OtherConfig.model_validate({"config": {
+        "type": "none",
+    }})
+
+    assert isinstance(c1.config, TestImplText)
+    assert isinstance(c2.config, TestImplText)
+    assert isinstance(c3.config, TestImplNumber)
+    assert isinstance(c4.config, TestImplNumber)
+    assert isinstance(c5.config, TestImplEmpty)
+    assert isinstance(c6.config, TestImplEmpty)

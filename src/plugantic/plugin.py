@@ -1,4 +1,4 @@
-from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, get_type_hints, get_origin, get_args, TYPE_CHECKING
+from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Collection, Sequence, get_type_hints, get_origin, get_args, TYPE_CHECKING
 from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import tagged_union_schema, union_schema
@@ -6,7 +6,7 @@ from pydantic_core.core_schema import tagged_union_schema, union_schema
 
 class PluganticConfigDict(ConfigDict, total=False):
     varname_type: str
-    value: str
+    value: str|Collection[str]
     auto_downcast: bool
     downcast_order: int
 
@@ -50,7 +50,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
 
     if not TYPE_CHECKING:
         def __init__(self, *args, **kwargs):
-            declared_type = self._get_declared_type() # inject the default discriminator value if not provided
+            declared_type = self._get_declared_types()[0] # inject the default discriminator value if not provided
             if declared_type:
                 kwargs = {
                     self.__plugantic_varname_type__: declared_type,
@@ -60,7 +60,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
 
     def __init_subclass__(cls, *,
         varname_type: str|None=None,
-        value: str|None=None,
+        value: str|Collection[str]|None=None,
         auto_downcast: bool|None=None,
         downcast_order: int|None=None,
     **kwargs):
@@ -85,7 +85,9 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
             cls.__plugantic_varname_type__ = varname_type
 
         if value is not None:
-            cls._create_annotation(cls.__plugantic_varname_type__, Literal[value])
+            if isinstance(value, str):
+                value = [value]
+            cls._create_annotation(cls.__plugantic_varname_type__, Literal[*value])
         
         cls._ensure_varname_default()
 
@@ -130,10 +132,10 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         SomeConfig(type="something") # works
         SomeConfig(type="else") # fails
         """
-        declared_type = cls._get_declared_type()
-        if not declared_type:
+        declared_types = cls._get_declared_types()
+        if not declared_types:
             return
-        cls._create_field_default(cls.__plugantic_varname_type__, declared_type)
+        cls._create_field_default(cls.__plugantic_varname_type__, declared_types[0])
 
     @classmethod
     def _get_declared_annotation(cls, name: str):
@@ -149,18 +151,18 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         return annotation
 
     @classmethod
-    def _get_declared_type(cls) -> str|None:
+    def _get_declared_types(cls) -> Sequence[str]:
         """Get the value declared for the discriminator name (e.g. `type: Literal["something"]` -> "something")"""
         field = cls._get_declared_annotation(cls.__plugantic_varname_type__)
 
         if get_origin(field) is Literal:
-            return get_args(field)[0]
+            return get_args(field)
 
-        return None
+        return []
 
     @classmethod
     def _is_valid_subclass(cls) -> bool:
-        if cls._get_declared_type():
+        if cls._get_declared_types():
             return True
         return False
 
@@ -190,11 +192,12 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         choices = dict[str, Type[Self]]()
 
         for subcls in subclasses:
-            type_ = subcls._get_declared_type()
-            existing = choices.get(type_, None)
-            if existing:
-                subcls = existing.__plugantic_order__(subcls)
-            choices[type_] = subcls
+            types = subcls._get_declared_types()
+            for type_ in types:
+                existing = choices.get(type_, None)
+                if existing:
+                    subcls = existing.__plugantic_order__(subcls)
+                choices[type_] = subcls
 
         choices = {
             type_: handler(subcls)
@@ -292,13 +295,12 @@ class PluganticCombinedModel:
             varname = subcls.__plugantic_varname_type__
             if varname is None:
                 continue
-            type_ = subcls._get_declared_type()
-            if type_ is None:
-                continue
-            existing = choices.setdefault(varname, {}).get(type_, None)
-            if existing:
-                subcls = existing.__plugantic_order__(subcls)
-            choices[varname][type_] = subcls
+            types = subcls._get_declared_types()
+            for type_ in types:
+                existing = choices.setdefault(varname, {}).get(type_, None)
+                if existing:
+                    subcls = existing.__plugantic_order__(subcls)
+                choices[varname][type_] = subcls
 
         choices = {
             varname: {type_: handler(subcls) for type_, subcls in types.items()}
