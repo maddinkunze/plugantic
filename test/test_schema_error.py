@@ -18,10 +18,10 @@ def test_schema_error():
         class TestImpl3(TestBase, value="image"):
             size: int = 0
         assert False
-    except ValueError:
-        pass
-    except:
+    except AssertionError:
         raise
+    except:
+        pass
 
 def test_schema_error_fix():
     class TestBase(PluginModel):

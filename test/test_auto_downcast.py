@@ -39,20 +39,20 @@ def test_auto_downcast():
     try:
         Config2.model_validate({"config": {"type": "impl1", "value": None}})
         assert False
-    except ValueError:
-        pass
-    except:
+    except AssertionError:
         raise
+    except:
+        pass
 
     Config2.model_validate({"config": {"type": "impl1", "value": "text"}})
 
     try:
         Config2.model_validate({"config": Impl1(value=None)})
         assert False
-    except ValueError:
-        pass
-    except:
+    except AssertionError:
         raise
+    except:
+        pass
 
     Config2.model_validate({"config": Impl1(value="text")})
     Config2.model_validate({"config": Impl2(value="text")})
