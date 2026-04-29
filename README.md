@@ -132,6 +132,33 @@ class CommonConfig(BaseModel):
     model_config = {"defer_build": True}
 ```
 
+### 🤏 Shorthands
+
+You can define custom enum-like values that can be set via a literal from everywhere and show up in the json schema for your plugin model:
+
+```python
+class Source(PluginModel):
+    ...
+
+class UrlSource(Source, value="url"):
+    url: str
+
+class FileSource(Source, value="file"):
+    path: Path
+
+RANDOM = FileSource(path=Path("/dev/random")).register_as_shorthand("random")
+SEARCH = UrlSource(url="https://example.com/search").register_as_shorthand("search", "web_search")
+
+class MyConfig(BaseModel):
+    source: Source
+
+MyConfig.model_validate({"source": "random"}) # this is a shorthand for
+MyConfig.model_validate({"source": {"type": "file", "path": "/dev/null"}})
+
+MyConfig.model_validate({"source": "search"}) # this and
+MyConfig.model_validate({"source": "web_search"}) # this are shorthands for
+MyConfig.model_validate({"source": {"type": "url", "url": "https://example.com/search"}})
+```
 
 ### 🚦 Intersection Types
 
