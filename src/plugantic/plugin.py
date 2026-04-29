@@ -1,12 +1,30 @@
+from abc import abstractmethod
 from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Collection, Sequence, get_type_hints, get_origin, get_args, TYPE_CHECKING
 from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
-from pydantic_core.core_schema import tagged_union_schema, union_schema
+from pydantic_core.core_schema import tagged_union_schema, union_schema, literal_schema, no_info_plain_validator_function, CoreSchema
 
+_LiteralType = str|int|float|bool|None
+
+if TYPE_CHECKING:
+    _LiteralUnset = None
+else:
+    _LiteralUnset = object()
+
+class PydanticNeverType:
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
+        def reject_all(v):
+            raise ValueError("no value accepted")
+        return no_info_plain_validator_function(reject_all)
+    
+    @classmethod
+    def __get_pydantic_json_schema__(cls, schema, handler):
+        return {"not": {}}  # Matches nothing
 
 class PluganticConfigDict(ConfigDict, total=False):
     varname_type: str
-    value: str|Collection[str]
+    value: _LiteralType|Collection[_LiteralType]
     auto_downcast: bool
     downcast_order: int
 
@@ -36,6 +54,7 @@ class PluganticModelMeta(type(BaseModel)):
     
 if TYPE_CHECKING:
     _PluginModelMeta = type(BaseModel)
+    
 else:
     _PluginModelMeta = PluganticModelMeta
 
@@ -45,8 +64,25 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
     __plugantic_downcast_order__: ClassVar[int|None] = None
     __plugantic_was_schema_created__: ClassVar[bool] = False
     __plugantic_check_schema_usage__: ClassVar[bool] = True
+    __plugantic_shorthands__: ClassVar[dict[_LiteralType, Self]] = {}
     
     model_config: ClassVar[ConfigDict|PluganticConfigDict] = PluganticConfigDict(defer_build=True)
+
+    @classmethod
+    def register_shorthand(cls, item: Self, *names: _LiteralType) -> None:
+        if not names:
+            names = tuple(item._get_declared_types())
+
+        for name in names:
+            if name in cls.__plugantic_shorthands__:
+                existing = cls.__plugantic_shorthands__[name]
+                if existing is not item:
+                    raise ValueError(f"Shorthand {repr(name)} is already registered for {existing.__class__.__name__}, cannot register it for {item.__class__.__name__}")
+            cls.__plugantic_shorthands__[name] = item
+
+    def register_as_shorthand(self, *names: _LiteralType) -> Self:
+        self.register_shorthand(self, *names)
+        return self
 
     if not TYPE_CHECKING:
         def __init__(self, *args, **kwargs):
@@ -60,7 +96,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
 
     def __init_subclass__(cls, *,
         varname_type: str|None=None,
-        value: str|Collection[str]|None=None,
+        value: _LiteralType|Collection[_LiteralType]=_LiteralUnset,
         auto_downcast: bool|None=None,
         downcast_order: int|None=None,
     **kwargs):
@@ -69,9 +105,13 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
 
         super().__init_subclass__(**kwargs)
 
+        cls.__plugantic_shorthands__ = {}
+
         if cls.model_config:
             varname_type = cls.model_config.get("varname_type", None) or varname_type
-            value = cls.model_config.get("value", None) or value
+            _mcval = cls.model_config.get("value", _LiteralUnset)
+            if _mcval is not _LiteralUnset:
+                value = _mcval
             auto_downcast = cls.model_config.get("auto_downcast", None) or auto_downcast
             downcast_order = cls.model_config.get("downcast_order", None) or downcast_order
 
@@ -84,9 +124,9 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         if varname_type is not None:
             cls.__plugantic_varname_type__ = varname_type
 
-        if value is not None:
-            if isinstance(value, str):
-                value = [value]
+        if value is not _LiteralUnset:
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                value = (value,)
             cls._create_annotation(cls.__plugantic_varname_type__, Literal[*value])
         
         cls._ensure_varname_default()
@@ -151,7 +191,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         return annotation
 
     @classmethod
-    def _get_declared_types(cls) -> Sequence[str]:
+    def _get_declared_types(cls) -> Sequence[_LiteralType]:
         """Get the value declared for the discriminator name (e.g. `type: Literal["something"]` -> "something")"""
         field = cls._get_declared_annotation(cls.__plugantic_varname_type__)
 
@@ -177,6 +217,16 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
             valid.update(subcls._get_valid_subclasses())
 
         return valid
+    
+    @classmethod
+    def _get_valid_shorthands(cls) -> dict[_LiteralType, Self]:
+        shorthands = cls.__plugantic_shorthands__.copy()
+        for subcls in cls.__subclasses__():
+            for name, item in subcls._get_valid_shorthands().items():
+                if name in shorthands and shorthands[name] is not item:
+                    raise ValueError(f"Shorthand {repr(name)} is already registered for {shorthands[name].__class__.__name__}, cannot register it for {item.__class__.__name__}")
+                shorthands[name] = item
+        return shorthands
 
     @classmethod
     def _as_tagged_union(cls, handler: GetCoreSchemaHandler):
@@ -189,7 +239,7 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
         for subcls in subclasses:
             subcls._mark_schema_created()
 
-        choices = dict[str, Type[Self]]()
+        choices = dict[_LiteralType, Type[Self]]()
 
         for subcls in subclasses:
             types = subcls._get_declared_types()
@@ -203,13 +253,36 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
             type_: handler(subcls)
             for type_, subcls in choices.items()
         }
+
+        if not choices:
+            return None
         
         return tagged_union_schema(choices, discriminator=cls.__plugantic_varname_type__)
 
     @classmethod
+    def _as_shorthand_union(cls):
+        shorthands = cls._get_valid_shorthands()
+        if not shorthands:
+            return None
+        keys = list(shorthands.keys())
+        def validator(v):
+            if v not in keys:
+                raise ValueError(f"Unknown shorthand {repr(v)}; expected one of {keys}")
+            return shorthands[v]
+        return no_info_plain_validator_function(validator, json_schema_input_schema=literal_schema(keys))
+
+    @classmethod
     def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
         cls._mark_schema_created()
-        return cls._as_tagged_union(handler)
+        tagged_union = cls._as_tagged_union(handler)
+        shorthand_union = cls._as_shorthand_union()
+        schemas = [tagged_union, shorthand_union]
+        schemas = [s for s in schemas if s is not None]
+        if not schemas:
+            return handler.generate_schema(PydanticNeverType) # no valid subclasses or shorthands, return an empty literal to make it always fail validation
+        if len(schemas) == 1:
+            return schemas[0]
+        return union_schema(schemas)
 
     @classmethod
     def __plugantic_order__(cls, other: Type[Self]) -> Type[Self]:
@@ -260,7 +333,13 @@ class PluganticCombinedModel:
     def __init__(self, *args: "PluganticCombinedModel|Type[PluginModel]"):
         self.items = args
     
-    def _get_valid_subclasses(self) -> Set[Type[PluginModel]]: ...
+    @abstractmethod
+    def _get_valid_subclasses(self) -> Set[Type[PluginModel]]:
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def _get_valid_shorthands(self) -> dict[_LiteralType, PluginModel]:
+        raise NotImplementedError()
 
     def __and__(self, other: Type):
         if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
@@ -282,14 +361,14 @@ class PluganticCombinedModel:
             return PluganticCombinedOr(other, self)
         return NotImplemented
 
-    def __get_pydantic_core_schema__(self, source, handler: GetCoreSchemaHandler):
+    def _as_tagged_union(self, handler: GetCoreSchemaHandler):
         subclasses = set(self._get_valid_subclasses())
         if len(subclasses) == 1:
             subcls = subclasses.pop()
             subcls._mark_schema_created()
             return handler(subcls)
         
-        choices = dict[str, dict[str, Type[PluginModel]]]()
+        choices = dict[str, dict[_LiteralType, Type[PluginModel]]]()
         for subcls in subclasses:
             subcls._mark_schema_created()
             varname = subcls.__plugantic_varname_type__
@@ -307,14 +386,36 @@ class PluganticCombinedModel:
             for varname, types in choices.items()
         }
 
+        choices = {varname: types for varname, types in choices.items() if types}
+
         unions: list = [
             tagged_union_schema(c, discriminator=d) for d, c in choices.items()
         ]
+
+        if not unions:
+            return None
 
         if len(unions) == 1:
             return unions.pop()
 
         return union_schema(unions)
+
+    def _as_shorthand_union(self):
+        shorthands = self._get_valid_shorthands()
+        if not shorthands:
+            return None
+        return no_info_plain_validator_function(lambda v: shorthands[v], json_schema_input_schema=literal_schema(list(shorthands.keys())))
+    
+    def __get_pydantic_core_schema__(self, source, handler: GetCoreSchemaHandler):
+        tagged_union = self._as_tagged_union(handler)
+        shorthand_union = self._as_shorthand_union()
+        schemas = [tagged_union, shorthand_union]
+        schemas = [s for s in schemas if s is not None]
+        if not schemas:
+            return handler.generate_schema(PydanticNeverType) # no valid subclasses or shorthands, return an empty literal to make it always fail validation
+        if len(schemas) == 1:
+            return schemas[0]
+        return union_schema(schemas)
 
 class PluganticCombinedAnd(PluganticCombinedModel):
     def _get_valid_subclasses(self):
@@ -327,6 +428,15 @@ class PluganticCombinedAnd(PluganticCombinedModel):
                 return items
             items.intersection_update(item._get_valid_subclasses())
         return items or set()
+    
+    def _get_valid_shorthands(self):
+        if not self.items:
+            return {}
+        shorthands = self.items[0]._get_valid_shorthands().copy()
+        for item in self.items[1:]:
+            item_shorthands = item._get_valid_shorthands()
+            shorthands = {name: shitem for name, shitem in shorthands.items() if (shitem is item_shorthands.get(name))}
+        return shorthands
 
 class PluganticCombinedOr(PluganticCombinedModel):
     def _get_valid_subclasses(self):
@@ -337,3 +447,13 @@ class PluganticCombinedOr(PluganticCombinedModel):
                 continue
             items.update(item._get_valid_subclasses())
         return items or set()
+
+    def _get_valid_shorthands(self):
+        shorthands = {}
+        for item in self.items:
+            for name, shitem in item._get_valid_shorthands().items():
+                if name in shorthands and shorthands[name] is not shitem:
+                    del shorthands[name] # remove ambiguous shorthands
+                    continue
+                shorthands[name] = shitem
+        return shorthands
