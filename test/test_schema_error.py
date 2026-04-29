@@ -48,3 +48,21 @@ def test_schema_error_fix():
     }})
         
     assert isinstance(config.config, TestImpl3)
+
+def test_schema_no_valid_value():
+    class TestBase(PluginModel):
+        pass
+
+    class OtherConfig(BaseModel):
+        config: TestBase
+
+    schema = OtherConfig.model_json_schema() # should not raise an error
+    assert schema["properties"]["config"]["not"] == {} # should be a schema that matches nothing
+
+    try:
+        OtherConfig.model_validate({"config": {}})
+        assert False
+    except AssertionError:
+        raise
+    except:
+        pass
