@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from sys import version_info
 from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Collection, Sequence, get_type_hints, get_origin, get_args, TYPE_CHECKING
 from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
 from pydantic.fields import FieldInfo
@@ -125,11 +126,15 @@ class PluginModel(BaseModel, metaclass=_PluginModelMeta):
             cls.__plugantic_varname_type__ = varname_type
 
         if value is not _LiteralUnset:
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                value = (value,)
-            cls._create_annotation(cls.__plugantic_varname_type__, Literal[*value])
+            cls._create_annotation(cls.__plugantic_varname_type__, cls._make_literal(value))
         
         cls._ensure_varname_default()
+
+    @staticmethod
+    def _make_literal(value: _LiteralType|Collection[_LiteralType]) -> Type:
+        if value is not None and not isinstance(value, (str, int, float, bool)):
+            value = tuple(value)
+        return Literal.__getitem__(value) # type: ignore # essentially the same as `Literal[*value]`, but the unpacking syntax is not supported on older python versions (<3.11)
 
     @classmethod
     def _create_annotation(cls, name: str, value: Any, *, only_set_if_not_exists: bool=False, force_set: bool=False):
