@@ -1,5 +1,5 @@
 from typing_extensions import Literal
-from plugantic import PluginModel, Field
+from plugantic import PluginModel, PluginAdapter, Field
 from pydantic import BaseModel
 
 def test_basic_usage_subclass_args():
@@ -16,7 +16,7 @@ def test_basic_usage_subclass_args():
         number: int = 0 # pyright: ignore[reportIncompatibleVariableOverride]
 
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
 
     OtherConfig(config=TestImplText(value="some text", text="other text"))
     OtherConfig(config=TestImplNumber(value="some number"))
@@ -62,7 +62,7 @@ def test_basic_usage_subclass_annotated():
         number: int = 0 # pyright: ignore[reportIncompatibleVariableOverride]
         
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
         
     OtherConfig(config=TestImplText(value="some text", text="other text"))
     OtherConfig(config=TestImplNumber(value="some number")) # pyright: ignore[reportCallIssue]
@@ -108,7 +108,7 @@ def test_basic_usage_subclass_config():
         model_config = {"value": "number-strict"}
         
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
         
     OtherConfig(config=TestImplText(value="some text", text="other text"))
     OtherConfig(config=TestImplNumber(value="some number"))
@@ -138,7 +138,7 @@ def test_basic_usage_subclass_config():
     assert isinstance(c3.config, TestImplNumberStrict)
 
 def test_basic_usage_multiple_values():
-    class TestBase(PluginModel, varname_type="type"):
+    class TestBase(PluginModel, discriminator="type"):
         pass
 
     class TestImplText(TestBase, value=["text", "str"]):
@@ -152,7 +152,7 @@ def test_basic_usage_multiple_values():
         type: Literal["empty", "none"] = Field(default=...)
 
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
 
     OtherConfig(config=TestImplText(text="other text"))
     OtherConfig(config=TestImplNumber(number=3))

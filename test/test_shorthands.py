@@ -1,6 +1,8 @@
 from typing import Literal
 from pydantic import BaseModel
-from plugantic import PluginModel, Field
+from plugantic import PluginModel, PluginAdapter, Field
+
+from ._common import InvalidTestStateException
 
 def test_shorthands_annotated():
     class TestBase(PluginModel):
@@ -14,12 +16,12 @@ def test_shorthands_annotated():
         type: Literal["number", "num"] = Field(default=...)
         number: int|None = None
     
-    EMPTY = TestImplText(text="").register_as_shorthand()
-    TEST = TestImplText(text="test").register_as_shorthand("test")
-    ZERO = TestImplNumber(number=0).register_as_shorthand()
+    EMPTY = TestImplText(text="").model_add_as_shorthand()
+    TEST = TestImplText(text="test").model_add_as_shorthand("test")
+    ZERO = TestImplNumber(number=0).model_add_as_shorthand()
 
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
 
     OtherConfig(config=EMPTY)
     OtherConfig(config=TEST)
@@ -50,8 +52,8 @@ def test_shorthands_annotated():
 
     try:
         OtherConfig.model_validate({"config": "unknown"})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Validation should fail for unknown shorthand")
+    except InvalidTestStateException:
         raise
     except:
         pass
@@ -66,12 +68,12 @@ def test_shorthands_subclass_args():
     class TestImplNumber(TestBase, value=("number", "num")):
         number: int|None = None
     
-    EMPTY = TestImplText(text="").register_as_shorthand()
-    TEST = TestImplText(text="test").register_as_shorthand("test")
-    ZERO = TestImplNumber(number=0).register_as_shorthand()
+    EMPTY = TestImplText(text="").model_add_as_shorthand()
+    TEST = TestImplText(text="test").model_add_as_shorthand("test")
+    ZERO = TestImplNumber(number=0).model_add_as_shorthand()
 
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
 
     OtherConfig(config=EMPTY)
     OtherConfig(config=TEST)
@@ -102,8 +104,8 @@ def test_shorthands_subclass_args():
 
     try:
         OtherConfig.model_validate({"config": "unknown"})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Validation should fail for unknown shorthand")
+    except InvalidTestStateException:
         raise
     except:
         pass
@@ -120,12 +122,12 @@ def test_shorthands_subclass_config():
         number: int|None = None
         model_config = {"value": ("number", "num")}
     
-    EMPTY = TestImplText(text="").register_as_shorthand()
-    TEST = TestImplText(text="test").register_as_shorthand("test")
-    ZERO = TestImplNumber(number=0).register_as_shorthand()
+    EMPTY = TestImplText(text="").model_add_as_shorthand()
+    TEST = TestImplText(text="test").model_add_as_shorthand("test")
+    ZERO = TestImplNumber(number=0).model_add_as_shorthand()
 
     class OtherConfig(BaseModel):
-        config: TestBase
+        config: PluginAdapter[TestBase]
 
     OtherConfig(config=EMPTY)
     OtherConfig(config=TEST)
@@ -156,8 +158,8 @@ def test_shorthands_subclass_config():
 
     try:
         OtherConfig.model_validate({"config": "unknown"})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Validation should fail for unknown shorthand")
+    except InvalidTestStateException:
         raise
     except:
         pass
@@ -173,11 +175,11 @@ def test_shorthands_conflicting():
         number: int|None = None
 
     try:
-        TestImpl1(text="").register_as_shorthand("sh1")
-        TestImpl2().register_as_shorthand("sh1")
-        TestBase.model_json_schema()
-        assert False
-    except AssertionError:
+        TestImpl1(text="").model_add_as_shorthand("sh1")
+        TestImpl2().model_add_as_shorthand("sh1")
+        PluginAdapter[TestBase].model_json_schema()
+        raise InvalidTestStateException("Conflicting shorthands should not be allowed")
+    except InvalidTestStateException:
         raise
     except:
         pass
@@ -195,54 +197,60 @@ def test_shorthands_combined():
     class TestBase2(PluginModel):
         pass
 
-    class TestImpl21(TestBase2, value="text"):
-        text: str
-
-    class TestImpl22(TestBase2, value="bool"):
+    class TestImpl21(TestBase2, value="bool"):
         flag: bool
 
-    TEXT1 = TestImpl11(text="").register_as_shorthand()
-    NUMBER = TestImpl12().register_as_shorthand()
-    TEXT2 = TestImpl21(text="").register_as_shorthand()
-    BOOL = TestImpl22(flag=False).register_as_shorthand()
+    class TestImpl22(TestBase1, TestBase2, value="none"):
+        pass
+
+    TestBase1Ref = PluginAdapter[TestBase1]
+    TestBase2Ref = PluginAdapter[TestBase2]
+
+    TEXT1 = TestImpl11(text="").model_add_as_shorthand()
+    NUMBER = TestImpl12().model_add_as_shorthand()
+    BOOL = TestImpl21(flag=False).model_add_as_shorthand()
+    NONE = TestImpl22().model_add_as_shorthand()
 
     class OtherConfig1(BaseModel):
-        config: TestBase1 | TestBase2
+        config: TestBase1Ref | TestBase2Ref
 
     class OtherConfig2(BaseModel):
-        config: TestBase1 & TestImpl11 # type: ignore[operator]
+        config: TestBase1Ref & TestBase2Ref # type: ignore[operator]
 
     c1 = OtherConfig1.model_validate({"config": "number"})
     c2 = OtherConfig1.model_validate({"config": "bool"})
+    c3 = OtherConfig1.model_validate({"config": "text"})
+    c4 = OtherConfig2.model_validate({"config": "none"})
 
     assert isinstance(c1.config, TestImpl12)
-    assert isinstance(c2.config, TestImpl22)
-
-    try:
-        OtherConfig1.model_validate({"config": "text"})
-        assert False
-    except AssertionError:
-        raise
-    except:
-        pass
-
-    c3 = OtherConfig2.model_validate({"config": "text"})
-
+    assert isinstance(c2.config, TestImpl21)
     assert isinstance(c3.config, TestImpl11)
+    assert isinstance(c4.config, TestImpl22)
+
+    c5 = OtherConfig2.model_validate({"config": "none"})
+
+    assert isinstance(c5.config, TestImpl22)
 
     try:
         OtherConfig2.model_validate({"config": "number"})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Validation should fail for unknown shorthand")
+    except InvalidTestStateException:
         raise
     except:
         pass
 
     try:
         OtherConfig2.model_validate({"config": "bool"})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Validation should fail for unknown shorthand")
+    except InvalidTestStateException:
         raise
     except:
         pass
 
+    try:
+        OtherConfig2.model_validate({"config": "text"})
+        raise InvalidTestStateException("Validation should fail for unknown shorthand")
+    except InvalidTestStateException:
+        raise
+    except:
+        pass

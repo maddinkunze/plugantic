@@ -1,6 +1,8 @@
 from typing import Literal
-from plugantic import PluginModel
+from plugantic import PluginModel, PluginAdapter, PluginIntersection
 from pydantic import BaseModel
+
+from ._common import InvalidTestStateException
 
 def test_combined_usage():
     class Base(PluginModel):
@@ -27,20 +29,25 @@ def test_combined_usage():
     class Impl4(Base):
         type: Literal["impl4"] = "impl4"
 
+    BaseRef = PluginAdapter[Base]
+    Feature1Ref = PluginAdapter[Feature1]
+    Feature2Ref = PluginAdapter[Feature2]
+    Feature3Ref = PluginAdapter[Feature3]
+
     class Config1(BaseModel):
-        config: Base
+        config: BaseRef
 
     class Config2(BaseModel):
-        config: Feature1
+        config: Feature1Ref
 
     class Config3(BaseModel):
-        config: Feature1 & Feature2 # type: ignore[operator]
+        config: PluginIntersection[Feature1Ref, Feature2Ref] # type: ignore[operator]
         
     class Config4(BaseModel):
-        config: Feature1 | Feature3
+        config: Feature1Ref | Feature3Ref
 
     class Config5(BaseModel):
-        config: (Feature1 & Feature2) | Feature3 # type: ignore[operator]
+        config: PluginIntersection[Feature1Ref, Feature2Ref] | Feature3Ref # type: ignore[operator]
 
     Config1.model_validate({"config": {"type": "impl1"}})
     Config2.model_validate({"config": {"type": "impl1"}})
@@ -52,16 +59,16 @@ def test_combined_usage():
     
     try:
         Config2.model_validate({"config": {"type": "impl2"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl2 should not be valid for Config2")
+    except InvalidTestStateException:
         raise
     except:
         pass
 
     try:
         Config3.model_validate({"config": {"type": "impl2"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl2 should not be valid for Config3")
+    except InvalidTestStateException:
         raise
     except:
         pass
@@ -73,16 +80,16 @@ def test_combined_usage():
         
     try:
         Config2.model_validate({"config": {"type": "impl3"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl3 should not be valid for Config2")
+    except InvalidTestStateException:
         raise
     except:
         pass
         
     try:
         Config3.model_validate({"config": {"type": "impl3"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl3 should not be valid for Config3")
+    except InvalidTestStateException:
         raise
     except:
         pass
@@ -94,32 +101,32 @@ def test_combined_usage():
     
     try:
         Config2.model_validate({"config": {"type": "impl4"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl4 should not be valid for Config2")
+    except InvalidTestStateException:
         raise
     except:
         pass
         
     try:
         Config3.model_validate({"config": {"type": "impl4"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl4 should not be valid for Config3")
+    except InvalidTestStateException:
         raise
     except:
         pass
         
     try:
         Config4.model_validate({"config": {"type": "impl4"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl4 should not be valid for Config4")
+    except InvalidTestStateException:
         raise
     except:
         pass
 
     try:
         Config5.model_validate({"config": {"type": "impl4"}})
-        assert False
-    except AssertionError:
+        raise InvalidTestStateException("Impl4 should not be valid for Config5")
+    except InvalidTestStateException:
         raise
     except:
         pass
