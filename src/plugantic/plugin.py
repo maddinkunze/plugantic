@@ -329,10 +329,14 @@ class _PluginMultiMeta(_PluginMeta):
     def __class_getitem__(cls, item):
         if not isinstance(item, tuple):
             item = (item,)
+        items = set()
         for plugin_type in item:
+            if isinstance(plugin_type, type) and issubclass(plugin_type, PluginModel):
+                plugin_type = PluginAdapter[plugin_type]
             if not isinstance(plugin_type, _PluginMeta):
                 raise TypeError(f"{cls.__name__.lstrip('_')} can only be used with PluginMeta types (e.g. PluginAdapter, PluginUnion, PluginIntersection), got {plugin_type}")
-        return cls(*item)
+            items.add(plugin_type)
+        return cls(*items)
     
     _check_isinstance_iterator: Callable[[Iterable[bool]], bool]
     def _check_isinstance(self, instance):
