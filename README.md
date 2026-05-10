@@ -72,10 +72,12 @@ class NumberConfig(OutputConfig):
 
 # No need to define a union type or a discriminator field!
 # You can just use the base type inside a plugin adapter as a field type!
+# (if you just use the base type, only the specific model can be validated)
 class CommonConfig(BaseModel):
     output: PluginAdapter[OutputConfig]
 
 # You can even add new configs after the fact!
+# (see in the extensibility section below, if it doesnt work for you)
 class BytesConfig(OutputConfig):
     mode: Literal["bytes"]
     content: bytes
@@ -210,7 +212,7 @@ class SomeOtherConfig(BaseModel):
 ### 📝 Type Checker Friendliness
 
 The type checker can infer the type of the plugin model, so you don't need to define a union type or a discriminator field!
-Everything except for the annotated union and the intersection types is based on pydantic and as such can be used like before as type checkers are already familiar with pydantic.
+Apart from annotated unions and intersection types, everything follows Python or Pydantic standards, so it can be used as usual since type checkers already understand those concepts very well.
 
 
 ## 🏛️ Leading Principles
