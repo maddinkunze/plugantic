@@ -11,7 +11,7 @@ dynamic = ["version"]
 
 dependencies = [
     "pydantic",
-    "propert",
+    "propert>=0.1.4",
     "typing-extensions",
 ]
 
