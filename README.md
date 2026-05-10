@@ -50,7 +50,7 @@ Whilst this works, there are multiple issues and annoyances with that approach:
 This library solves all of these issues (and more), so you can just write
 
 ```python
-from plugantic import PluginModel
+from plugantic import PluginModel, PluginAdapter
 
 class OutputConfig(PluginModel, varname_type="mode"):
     def print(self): ...
@@ -71,9 +71,9 @@ class NumberConfig(OutputConfig):
         print(f"{self.number:.{self.precision}f}")
 
 # No need to define a union type or a discriminator field!
-# You can just use the base type as a field type!
+# You can just use the base type inside a plugin adapter as a field type!
 class CommonConfig(BaseModel):
-    output: OutputConfig
+    output: PluginAdapter[OutputConfig]
 
 # You can even add new configs after the fact!
 class BytesConfig(OutputConfig):
@@ -110,10 +110,10 @@ class BaseConfig(PluginModel):
 ...
 
 class CommonConfig1(BaseModel):
-    config: BaseConfig
+    config: PluginAdapter[BaseConfig]
 
 class CommonConfig2(BaseModel):
-    config: "BaseConfig" # or by using a string as the type annotation
+    config: "PluginAdapter[BaseConfig]" # or by using a string as the type annotation
 
 
 class NumberConfig(BaseConfig): # now you can declare new types after the fact (but before using/validating the models)!
@@ -127,7 +127,7 @@ class BaseConfig(PluginModel):
     ...
 
 class CommonConfig(BaseModel):
-    config: BaseConfig
+    config: PluginAdapter[BaseConfig]
 
     model_config = {"defer_build": True}
 ```
@@ -150,7 +150,7 @@ RANDOM = FileSource(path=Path("/dev/random")).register_as_shorthand("random")
 SEARCH = UrlSource(url="https://example.com/search").register_as_shorthand("search", "web_search")
 
 class MyConfig(BaseModel):
-    source: Source
+    source: PluginAdapter[Source]
 
 MyConfig.model_validate({"source": "random"}) # this is a shorthand for
 MyConfig.model_validate({"source": {"type": "file", "path": "/dev/null"}})
@@ -195,10 +195,16 @@ However, you cannot easily declare a type annotation in python that requires bot
 
 ```python
 class SomeOtherConfig(BaseModel):
-    logger: LoggerWithColor & LoggerWithEmojis
+    logger: PluginAdapter[LoggerWithColor] & PluginAdapter[LoggerWithEmojis]
 ```
 
-Note, that this will break with most type checkers, as this is not a valid type annotation in python. It does work at runtime though and it is very obvious what this syntax means. You can use `# type: ignore[operator]` to the end of the type annotation to stop the warnings about the incorrect type annotation from your linter.
+Note, that this will break with most type checkers, as this is not a valid type annotation in python ([yet](https://github.com/python/typing/issues/18)?). It does work at runtime though and it is very obvious what this syntax means. You can use `# type: ignore[operator]` to the end of the type annotation to stop the warnings about the incorrect type annotation from your linter.
+Alternatively, you can use the following syntax, although it is not actually properly enforced by type checkers (will be treated as `Union[...]` at type-checking time):
+
+```python
+class SomeOtherConfig(BaseModel):
+    logger: PluginIntersection[LoggerWithColor, LoggerWithEmojis]
+```
 
 
 ### 📝 Type Checker Friendliness
