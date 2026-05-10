@@ -1,464 +1,416 @@
 from abc import abstractmethod
-from sys import version_info
-from typing_extensions import ClassVar, Type, Self, Literal, Any, TypeVar, Set, Collection, Sequence, get_type_hints, get_origin, get_args, TYPE_CHECKING
-from pydantic import BaseModel, GetCoreSchemaHandler, Field, ConfigDict, model_validator
-from pydantic.fields import FieldInfo
-from pydantic_core.core_schema import tagged_union_schema, union_schema, literal_schema, no_info_plain_validator_function, CoreSchema
+from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, Field
+from pydantic_core.core_schema import CoreSchema, union_schema, tagged_union_schema, literal_schema, no_info_plain_validator_function, json_or_python_schema
+from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeVarTuple, TypeAlias, Iterable, Collection, Callable, TypeIs, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
+from propert import classproperty
 
-_LiteralType = str|int|float|bool|None
+_LiteralType: TypeAlias = Union[str, int, float, bool, None]
 
 if TYPE_CHECKING:
     _LiteralUnset = None
 else:
     _LiteralUnset = object()
 
-class PydanticNeverType:
+def is_literal_value(value: Any) -> TypeIs[_LiteralType]:
+    if value is None:
+        return True
+    if isinstance(value, (str, int, float, bool)):
+        return True
+    return False
+
+def ensure_literal_value_collection(value: _LiteralType|Collection[_LiteralType]) -> Collection[_LiteralType]:
+    if is_literal_value(value):
+        return (value,)
+    return value
+
+_CollectedSubclassesType = Mapping[str, Collection[Type["PluginModel"]]]
+_CollectedShorthandsType = Mapping[_LiteralType, "PluginModel|Callable[[], PluginModel]"]
+_CollectedOptionsType = Tuple[_CollectedSubclassesType, _CollectedShorthandsType]
+
+_MutableOptionsDiscriminator = Dict[str, Set[Type["PluginModel"]]]
+_MutableOptionsLiterals = Dict[_LiteralType, "PluginModel|Callable[[], PluginModel]"]
+
+class PydanticNeverType: # TODO: there has to be a better way to have a type in pydantic that matches no value
     @classmethod
-    def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
-        def reject_all(v):
+    def __get_pydantic_core_schema__(cls, *_1, **_2):
+        def reject_all(*_3, **_4):
             raise ValueError("no value accepted")
         return no_info_plain_validator_function(reject_all)
     
     @classmethod
-    def __get_pydantic_json_schema__(cls, schema, handler):
+    def __get_pydantic_json_schema__(cls, *_1, **_2):
         return {"not": {}}  # Matches nothing
 
 class PluganticConfigDict(ConfigDict, total=False):
     varname_type: str
     value: _LiteralType|Collection[_LiteralType]
-    auto_downcast: bool
-    downcast_order: int
+    allow_changes_after_collection: bool
 
-_T1 = TypeVar("_T1")
-_T2 = TypeVar("_T2")
+class PluginModel(BaseModel):
+    __plugantic_declared_values__: ClassVar[Collection[_LiteralType]] = ()
+    __plugantic_shorthands__: ClassVar[Dict[_LiteralType, Self|Callable[[], Self]]] = {}
+    __plugantic_discriminator__: ClassVar[str] = "type"
+    __plugantic_collected_options__: ClassVar[_CollectedOptionsType|None] = None
+    __plugantic_check_collected__: ClassVar[bool] = True
 
-class PluganticModelMeta(type(BaseModel)):
-    def __and__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
-            return PluganticCombinedAnd(cls, other) # pyright: ignore[reportReturnType]
-        return NotImplemented
+    if TYPE_CHECKING:
+        model_config: ClassVar[ConfigDict|PluganticConfigDict]
+    else:
+        model_plugin_type: ClassVar[Any]
 
-    def __rand__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
-            return PluganticCombinedAnd(other, cls) # pyright: ignore[reportReturnType]
-        return NotImplemented
-
-    def __or__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
-            return PluganticCombinedOr(cls, other) # pyright: ignore[reportReturnType]
-        return NotImplemented
-
-    def __ror__(cls: Type[_T1], other: Type[_T2]) -> Type[_T1|_T2]:
-        if issubclass(cls, PluginModel) and (issubclass(other, PluginModel) or isinstance(other, PluganticCombinedModel)):
-            return PluganticCombinedOr(other, cls) # pyright: ignore[reportReturnType]
-        return NotImplemented
+    @classproperty
+    @classmethod
+    def model_plugin_type(cls) -> "Type[PluginAdapter[Self]]":
+        return PluginAdapter[cls]
     
-if TYPE_CHECKING:
-    _PluginModelMeta = type(BaseModel)
-    
-else:
-    _PluginModelMeta = PluganticModelMeta
+    @overload
+    @classmethod
+    def model_add_shorthand(cls, item: Self, shorthand: _LiteralType, *shorthands: _LiteralType) -> None: ...
 
-class PluginModel(BaseModel, metaclass=_PluginModelMeta):
-    __plugantic_varname_type__: ClassVar[str] = "type"
-    __plugantic_auto_downcast__: ClassVar[bool] = True
-    __plugantic_downcast_order__: ClassVar[int|None] = None
-    __plugantic_was_schema_created__: ClassVar[bool] = False
-    __plugantic_check_schema_usage__: ClassVar[bool] = True
-    __plugantic_shorthands__: ClassVar[dict[_LiteralType, Self]] = {}
-    
-    model_config: ClassVar[ConfigDict|PluganticConfigDict] = PluganticConfigDict(defer_build=True)
+    @overload
+    @classmethod
+    def model_add_shorthand(cls, item: Callable[[], Self], shorthand: _LiteralType, *shorthands: _LiteralType, cached: bool=False) -> None: ...
 
     @classmethod
-    def register_shorthand(cls, item: Self, *names: _LiteralType) -> None:
-        if not names:
-            names = tuple(item._get_declared_types())
+    def model_add_shorthand(cls, item: Self|Callable[[], Self], shorthand: _LiteralType, *shorthands: _LiteralType, cached: bool=False) -> None:
+        if cached and callable(item):
+            item_cb = item
+            item_cache = None
+            def item_cached():
+                nonlocal item_cache
+                if item_cache is None:
+                    item_cache = item_cb()
+                return item_cache
+            item = item_cached
 
-        for name in names:
-            if name in cls.__plugantic_shorthands__:
-                existing = cls.__plugantic_shorthands__[name]
-                if existing is not item:
-                    raise ValueError(f"Shorthand {repr(name)} is already registered for {existing.__class__.__name__}, cannot register it for {item.__class__.__name__}")
-            cls.__plugantic_shorthands__[name] = item
+        shorthands = (shorthand, *shorthands)
+        for shorthand in shorthands:
+            if cls.__plugantic_shorthands__.get(shorthand, item) != item:
+                raise ValueError(f"Shorthand {shorthand} is already registered for a different item")
+            cls.__plugantic_shorthands__[shorthand] = item
 
-    def register_as_shorthand(self, *names: _LiteralType) -> Self:
-        self.register_shorthand(self, *names)
+    def model_add_as_shorthand(self, *shorthands: _LiteralType) -> Self:
+        if not shorthands:
+            shorthands = tuple(self.__plugantic_declared_values__)
+        if not shorthands:
+            raise ValueError(f"No shorthands provided for {self} and no declared values found")
+        self.model_add_shorthand(self, *shorthands)
         return self
-
+    
     if not TYPE_CHECKING:
         def __init__(self, *args, **kwargs):
-            declared_type = self._get_declared_types()[0] # inject the default discriminator value if not provided
-            if declared_type:
-                kwargs = {
-                    self.__plugantic_varname_type__: declared_type,
-                    **kwargs
-                }
+            if self.__plugantic_declared_values__:
+                kwargs.setdefault(self.__plugantic_discriminator__, next(iter(self.__plugantic_declared_values__)))
             super().__init__(*args, **kwargs)
 
     def __init_subclass__(cls, *,
-        varname_type: str|None=None,
+        discriminator: str|None=None,
         value: _LiteralType|Collection[_LiteralType]=_LiteralUnset,
-        auto_downcast: bool|None=None,
-        downcast_order: int|None=None,
+        allow_changes_after_collection: bool|None=None,
     **kwargs):
-        if cls._check_plugantic_schema_usage():
-            raise ValueError(f"Schema of {cls.__name__} has already been created. Creating new subclasses after the schema has been created will lead to undefined behaviour.")
+        cls.__plugantic_shorthands__ = {}
+        cls.__plugantic_collected_options__ = None
+
+        allow_changes = cls.model_config.get("allow_changes_after_collection", None)
+        if allow_changes_after_collection is not None:
+            cls.__plugantic_check_collected__ = not allow_changes_after_collection
+        elif allow_changes is not None:
+            cls.__plugantic_check_collected__ = not allow_changes
+
+        if not cls._are_plugantic_changes_allowed():
+            raise ValueError("Cannot create a new PluginModel subclass after the plugin schema for it has been created. Make sure to define all PluginModel subclasses before using them in a PluginAdapter or similar or make sure the consumer of PluginAdapter uses `defer_build` or similar mechanisms.")
+        
+        discriminator_mc = cls.model_config.get("discriminator", None)
+        if discriminator is not None:
+            cls.__plugantic_discriminator__ = discriminator
+        elif discriminator_mc is not None:
+            cls.__plugantic_discriminator__ = discriminator_mc
+
+        values_set: Collection[_LiteralType]|None = None
+        values_mc = cls.model_config.get("value", _LiteralUnset)
+        if value is not _LiteralUnset:
+            values_set = ensure_literal_value_collection(value)
+        elif values_mc is not _LiteralUnset:
+            values_set = ensure_literal_value_collection(values_mc)
+        if values_set is None:
+            values_set = cls._get_declared_plugantic_values_from_annotations()
+        if values_set is not None:
+            cls.__plugantic_declared_values__ = values_set
+            cls._create_plugantic_annotation()
+
+        if kwargs:
+            raise ValueError(f"Unexpected keyword arguments in subclass definition: {kwargs.keys()}")
 
         super().__init_subclass__(**kwargs)
 
-        cls.__plugantic_shorthands__ = {}
-
-        if cls.model_config:
-            varname_type = cls.model_config.get("varname_type", None) or varname_type
-            _mcval = cls.model_config.get("value", _LiteralUnset)
-            if _mcval is not _LiteralUnset:
-                value = _mcval
-            auto_downcast = cls.model_config.get("auto_downcast", None) or auto_downcast
-            downcast_order = cls.model_config.get("downcast_order", None) or downcast_order
-
-        cls.__plugantic_was_schema_created__ = False
-        cls.__plugantic_downcast_order__ = downcast_order
-
-        if auto_downcast is not None:
-            cls.__plugantic_auto_downcast__ = auto_downcast
-
-        if varname_type is not None:
-            cls.__plugantic_varname_type__ = varname_type
-
-        if value is not _LiteralUnset:
-            cls._create_annotation(cls.__plugantic_varname_type__, cls._make_literal(value))
-        
-        cls._ensure_varname_default()
-
-    @staticmethod
-    def _make_literal(value: _LiteralType|Collection[_LiteralType]) -> Type:
-        if value is not None and not isinstance(value, (str, int, float, bool)):
-            value = tuple(value)
-        return Literal.__getitem__(value) # type: ignore # essentially the same as `Literal[*value]`, but the unpacking syntax is not supported on older python versions (<3.11)
+    @classmethod
+    def _make_plugantic_literal(cls):
+        return Literal.__getitem__(tuple(cls.__plugantic_declared_values__)) # type: ignore # essentially the same as `Literal[*value]`, but the unpacking syntax is not supported on older python versions (<3.11)
 
     @classmethod
-    def _create_annotation(cls, name: str, value: Any, *, only_set_if_not_exists: bool=False, force_set: bool=False):
+    def _create_plugantic_annotation(cls):
         """
         Create an annotation of value for the given name as a member variable of the class
         e.g. name="type" value=Literal["test"] -> `type: Literal["test"]`
         """
         if not hasattr(cls, "__annotations__"):
             cls.__annotations__ = {}
-        existing_annotation = cls._get_declared_annotation(name)
-        if (existing_annotation is None) and only_set_if_not_exists:
+        existing_annotation = cls._get_plugantic_value_annotations()
+        value = cls._make_plugantic_literal()
+        if existing_annotation == value:
             return
-        if existing_annotation == value and (not force_set):
-            return
-        cls.__annotations__[name] = value
-
-    _NoValue = object()
-    @classmethod
-    def _create_field_default(cls, name: str, value: Any):
-        actual_value = getattr(cls, name, cls._NoValue)
-        if isinstance(actual_value, FieldInfo):
-            if actual_value.default == value:
-                return
-            value = FieldInfo.merge_field_infos(actual_value, Field(default=value))
-        
-        if actual_value == value:
-            return
-        
-        setattr(cls, name, value)
+        cls.__annotations__[cls.__plugantic_discriminator__] = value
 
     @classmethod
-    def _ensure_varname_default(cls):
-        """
-        Ensure that the discriminator name is associated with a value so that creating a direct instance does not require passing the value again
-        e.g.:
-        class SomeConfig(PluginModel):
-            type: Literal["something"] # will be transformed to the equivalent of `type: Literal["something"] = "something"`
-
-        SomeConfig() # works, because there is a default value set
-        SomeConfig(type="something") # works
-        SomeConfig(type="else") # fails
-        """
-        declared_types = cls._get_declared_types()
-        if not declared_types:
-            return
-        cls._create_field_default(cls.__plugantic_varname_type__, declared_types[0])
-
-    @classmethod
-    def _get_declared_annotation(cls, name: str):
+    def _get_plugantic_value_annotations(cls):
         annotation = None
         try:
-            annotation = get_type_hints(cls).get(name, None)
+            annotation = get_type_hints(cls).get(cls.__plugantic_discriminator__, None)
         except (NameError, TypeError):
             pass
-        if not annotation:
-            field = cls.model_fields.get(name, None)
-            if field:
-                annotation = field.annotation
+        #if not annotation:
+        #    field = cls.model_fields.get(cls.__plugantic_discriminator__, None)
+        #    if field:
+        #        annotation = field.annotation
         return annotation
 
     @classmethod
-    def _get_declared_types(cls) -> Sequence[_LiteralType]:
-        """Get the value declared for the discriminator name (e.g. `type: Literal["something"]` -> "something")"""
-        field = cls._get_declared_annotation(cls.__plugantic_varname_type__)
+    def _get_declared_plugantic_values_from_annotations(cls) -> Set[_LiteralType]|None:
+        field = cls._get_plugantic_value_annotations()
 
         if get_origin(field) is Literal:
-            return get_args(field)
+            return set(get_args(field))
 
-        return []
+        return None
 
     @classmethod
-    def _is_valid_subclass(cls) -> bool:
-        if cls._get_declared_types():
+    def _are_plugantic_changes_allowed(cls):
+        if not cls.__plugantic_check_collected__:
             return True
-        return False
-
-    @classmethod
-    def _get_valid_subclasses(cls) -> Set[Type[Self]]:
-        valid = set()
-
-        if cls._is_valid_subclass():
-            valid.add(cls)
-
-        for subcls in cls.__subclasses__():
-            valid.update(subcls._get_valid_subclasses())
-
-        return valid
-    
-    @classmethod
-    def _get_valid_shorthands(cls) -> dict[_LiteralType, Self]:
-        shorthands = cls.__plugantic_shorthands__.copy()
-        for subcls in cls.__subclasses__():
-            for name, item in subcls._get_valid_shorthands().items():
-                if name in shorthands and shorthands[name] is not item:
-                    raise ValueError(f"Shorthand {repr(name)} is already registered for {shorthands[name].__class__.__name__}, cannot register it for {item.__class__.__name__}")
-                shorthands[name] = item
-        return shorthands
-
-    @classmethod
-    def _as_tagged_union(cls, handler: GetCoreSchemaHandler):
-        subclasses = set(cls._get_valid_subclasses())
-        if len(subclasses) == 1:
-            subcls = subclasses.pop()
-            subcls._mark_schema_created()
-            return handler(subcls)
-
-        for subcls in subclasses:
-            subcls._mark_schema_created()
-
-        choices = dict[_LiteralType, Type[Self]]()
-
-        for subcls in subclasses:
-            types = subcls._get_declared_types()
-            for type_ in types:
-                existing = choices.get(type_, None)
-                if existing:
-                    subcls = existing.__plugantic_order__(subcls)
-                choices[type_] = subcls
-
-        choices = {
-            type_: handler(subcls)
-            for type_, subcls in choices.items()
-        }
-
-        if not choices:
-            return None
-        
-        return tagged_union_schema(choices, discriminator=cls.__plugantic_varname_type__)
-
-    @classmethod
-    def _as_shorthand_union(cls):
-        shorthands = cls._get_valid_shorthands()
-        if not shorthands:
-            return None
-        keys = list(shorthands.keys())
-        def validator(v):
-            if v not in keys:
-                raise ValueError(f"Unknown shorthand {repr(v)}; expected one of {keys}")
-            return shorthands[v]
-        return no_info_plain_validator_function(validator, json_schema_input_schema=literal_schema(keys))
-
-    @classmethod
-    def __get_pydantic_core_schema__(cls, source, handler: GetCoreSchemaHandler):
-        cls._mark_schema_created()
-        tagged_union = cls._as_tagged_union(handler)
-        shorthand_union = cls._as_shorthand_union()
-        schemas = [tagged_union, shorthand_union]
-        schemas = [s for s in schemas if s is not None]
-        if not schemas:
-            return handler.generate_schema(PydanticNeverType) # no valid subclasses or shorthands, return an empty literal to make it always fail validation
-        if len(schemas) == 1:
-            return schemas[0]
-        return union_schema(schemas)
-
-    @classmethod
-    def __plugantic_order__(cls, other: Type[Self]) -> Type[Self]:
-        if cls.__plugantic_downcast_order__ is not None and other.__plugantic_downcast_order__ is not None:
-            if cls.__plugantic_downcast_order__ < other.__plugantic_downcast_order__:
-                return cls
-            return other
-
-        if other in cls.mro():
-            return other
-        if cls in other._get_valid_subclasses():
-            return other
-        
-        return cls
-
-    @classmethod
-    def _mark_schema_created(cls) -> None:
-        cls.__plugantic_was_schema_created__ = True
-        
-    @classmethod
-    def _check_plugantic_schema_usage(cls) -> bool:
-        """
-        Return True if the schema of this class or any of its superclasses has been created
-        This check can be circumvented by setting __plugantic_check_schema_usage__ to False
-        """
-        if not cls.__plugantic_check_schema_usage__:
-            return False
         for supcls in cls.mro():
             if not issubclass(supcls, PluginModel):
                 continue
-            if supcls.__plugantic_was_schema_created__:
-                return True
-        return False
+            if supcls.__plugantic_collected_options__ is not None:
+                return False
+        return True
 
-    @model_validator(mode="wrap")
     @classmethod
-    def _try_downcast(cls, data, handler):
-        if isinstance(data, cls):
-            pass
-        elif cls.__plugantic_auto_downcast__ and issubclass(cls, type(data)):
-            try:
-                data = cls(**data.model_dump())
-            except Exception as e:
-                raise ValueError(f"Failed to downcast given {repr(data)} to required {cls.__name__}; please provide the required config directly") from e
-        return handler(data)
-
-class PluganticCombinedModel:
-    def __init__(self, *args: "PluganticCombinedModel|Type[PluginModel]"):
-        self.items = args
-    
-    @abstractmethod
-    def _get_valid_subclasses(self) -> Set[Type[PluginModel]]:
-        raise NotImplementedError()
-    
-    @abstractmethod
-    def _get_valid_shorthands(self) -> dict[_LiteralType, PluginModel]:
-        raise NotImplementedError()
-
-    def __and__(self, other: Type):
-        if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
-            return PluganticCombinedAnd(self, other)
-        return NotImplemented
-
-    def __rand__(self, other):
-        if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
-            return PluganticCombinedAnd(other, self)
-        return NotImplemented
-
-    def __or__(self, other):
-        if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
-            return PluganticCombinedOr(self, other)
-        return NotImplemented
-
-    def __ror__(self, other):
-        if isinstance(other, PluganticCombinedModel) or issubclass(other, PluginModel):
-            return PluganticCombinedOr(other, self)
-        return NotImplemented
-
-    def _as_tagged_union(self, handler: GetCoreSchemaHandler):
-        subclasses = set(self._get_valid_subclasses())
-        if len(subclasses) == 1:
-            subcls = subclasses.pop()
-            subcls._mark_schema_created()
-            return handler(subcls)
+    def _collect_plugantic_options(cls) -> _CollectedOptionsType:
+        if cls.__plugantic_collected_options__ is not None:
+            return cls.__plugantic_collected_options__
         
-        choices = dict[str, dict[_LiteralType, Type[PluginModel]]]()
-        for subcls in subclasses:
-            subcls._mark_schema_created()
-            varname = subcls.__plugantic_varname_type__
-            if varname is None:
-                continue
-            types = subcls._get_declared_types()
-            for type_ in types:
-                existing = choices.setdefault(varname, {}).get(type_, None)
-                if existing:
-                    subcls = existing.__plugantic_order__(subcls)
-                choices[varname][type_] = subcls
+        subclasses: _MutableOptionsDiscriminator = {}
+        shorthands: _MutableOptionsLiterals = {}
+        if cls.__plugantic_declared_values__:
+            subclasses.setdefault(cls.__plugantic_discriminator__, set()).add(cls)
+        for shorthand, item in cls.__plugantic_shorthands__.items():
+            shorthands[shorthand] = item
+            
+        for subcls in cls.__subclasses__():
+            subclasses_sub, shorthands_sub = subcls._collect_plugantic_options()
+            for discriminator, subcls_set in subclasses_sub.items():
+                subclasses.setdefault(discriminator, set()).update(subcls_set)
+            for shorthand, item in shorthands_sub.items():
+                if shorthands.get(shorthand, item) != item:
+                    raise ValueError(f"Shorthand {shorthand} was given to multiple items: {item!r} and {shorthands[shorthand]!r}")
+                shorthands[shorthand] = item
 
-        choices = {
-            varname: {type_: handler(subcls) for type_, subcls in types.items()}
-            for varname, types in choices.items()
-        }
+        cls.__plugantic_collected_options__ = subclasses, shorthands
+        return subclasses, shorthands
 
-        choices = {varname: types for varname, types in choices.items() if types}
+T = TypeVar("T", bound=PluginModel)
+Ts = TypeVarTuple("Ts")
 
-        unions: list = [
-            tagged_union_schema(c, discriminator=d) for d, c in choices.items()
-        ]
-
-        if not unions:
-            return None
-
-        if len(unions) == 1:
-            return unions.pop()
-
-        return union_schema(unions)
-
-    def _as_shorthand_union(self):
-        shorthands = self._get_valid_shorthands()
-        if not shorthands:
-            return None
-        return no_info_plain_validator_function(lambda v: shorthands[v], json_schema_input_schema=literal_schema(list(shorthands.keys())))
+class _PluginMeta:
+    @property
+    def _plugin_union_expansion(self) -> Tuple["_PluginMeta", ...]:
+        return (self,)
     
-    def __get_pydantic_core_schema__(self, source, handler: GetCoreSchemaHandler):
-        tagged_union = self._as_tagged_union(handler)
-        shorthand_union = self._as_shorthand_union()
-        schemas = [tagged_union, shorthand_union]
-        schemas = [s for s in schemas if s is not None]
+    @property
+    def _plugin_intersection_expansion(self) -> Tuple["_PluginMeta", ...]:
+        return (self,)
+    
+    def __or__(self, other):
+        if not isinstance(other, _PluginMeta):
+            return Union[self, other]
+        return _PluginUnion(*self._plugin_union_expansion, *other._plugin_union_expansion)
+    
+    def __ror__(self, other):
+        if not isinstance(other, _PluginMeta):
+            return Union[other, self]
+        return _PluginUnion(*other._plugin_union_expansion, *self._plugin_union_expansion)
+    
+    def __and__(self, other):
+        if not isinstance(other, _PluginMeta):
+            return NotImplemented # TODO: replace with intersection type once it is implemented in python
+        return _PluginIntersection(*self._plugin_intersection_expansion, *other._plugin_intersection_expansion)
+    
+    def __rand__(self, other):
+        if not isinstance(other, _PluginMeta):
+            return NotImplemented # TODO: replace with intersection type once it is implemented in python
+        return _PluginIntersection(*other._plugin_intersection_expansion, *self._plugin_intersection_expansion)
+    
+    @abstractmethod
+    def _collect_plugantic_options(self) -> _CollectedOptionsType|None: ...
+
+    @abstractmethod
+    def _check_isinstance(self, instance) -> bool: ...
+
+    def __get_pydantic_core_schema__(self, source, handler: GetCoreSchemaHandler) -> CoreSchema:
+        collected_options = self._collect_plugantic_options()
+        if collected_options is None:
+            return handler.generate_schema(PydanticNeverType)
+
+        schemas = []
+
+        def _check_isinstance(v):
+            # simple check to see if the value is aready an instance of the required plugin type, this allows to skip the more expensive validation if the value is already correct
+            # also allows passing instantiated plugin models whose class was declared after the plugin schema was created, which would otherwise not be accepted due to the way plugin options are collected and cached
+            if self._check_isinstance(v):
+                return v
+            raise ValueError(f"Value {v!r} is not an instance of the required plugin type")
+        schema_isinstance = no_info_plain_validator_function(_check_isinstance)
+
+        options_discriminators, options_literals = collected_options
+
+        if options_literals:
+            values_literals = list(options_literals.keys())
+            def validate_literal(v):
+                if not is_literal_value(v):
+                    raise ValueError(f"Expected a literal value (str, int, float, bool or None), got {v!r}")
+                value = options_literals.get(v, None)
+                if value is None:
+                    raise ValueError(f"Unknown literal value {v}, expected one of {values_literals}")
+                if callable(value):
+                    return value()
+                return value
+            schemas.append(no_info_plain_validator_function(validate_literal, json_schema_input_schema=literal_schema(values_literals)))
+
+        for discriminator, options in options_discriminators.items():
+            choices_discriminator = {}
+            for option in options:
+                schema = handler.generate_schema(option)
+                for value in option.__plugantic_declared_values__:
+                    if choices_discriminator.get(value, option) != option:
+                        raise ValueError(f"Declared value {value} was given to multiple options: {option} and {choices_discriminator[value]}")
+                    choices_discriminator[value] = schema
+            schemas.append(tagged_union_schema(choices_discriminator, discriminator))
+
         if not schemas:
-            return handler.generate_schema(PydanticNeverType) # no valid subclasses or shorthands, return an empty literal to make it always fail validation
-        if len(schemas) == 1:
-            return schemas[0]
-        return union_schema(schemas)
+            json_schema = handler.generate_schema(PydanticNeverType)
+            python_schema = schema_isinstance
+        elif len(schemas) == 1:
+            json_schema = schemas[0]
+            python_schema = union_schema([schema_isinstance, json_schema], mode="left_to_right")
+        else:
+            json_schema = union_schema(schemas)
+            python_schema = union_schema([schema_isinstance, *schemas], mode="left_to_right")
+        return json_or_python_schema(json_schema, python_schema)
+        
+class _PluginWrapper(_PluginMeta):
+    def __init__(self, plugin_type: Type[PluginModel]):
+        self._plugin_type = plugin_type
 
-class PluganticCombinedAnd(PluganticCombinedModel):
-    def _get_valid_subclasses(self):
-        items = None
-        for item in self.items:
-            if items is None:
-                items = item._get_valid_subclasses()
-                continue
-            if not items:
-                return items
-            items.intersection_update(item._get_valid_subclasses())
-        return items or set()
+    def __class_getitem__(cls, item):
+        if not isinstance(item, type) or not issubclass(item, PluginModel):
+            raise TypeError(f"PluginAdapter can only be used with {PluginModel.__name__} subclasses, got {item}")
+        return cls(item)
     
-    def _get_valid_shorthands(self):
-        if not self.items:
-            return {}
-        shorthands = self.items[0]._get_valid_shorthands().copy()
-        for item in self.items[1:]:
-            item_shorthands = item._get_valid_shorthands()
-            shorthands = {name: shitem for name, shitem in shorthands.items() if (shitem is item_shorthands.get(name))}
-        return shorthands
+    def _collect_plugantic_options(self):
+        return self._plugin_type._collect_plugantic_options()
 
-class PluganticCombinedOr(PluganticCombinedModel):
-    def _get_valid_subclasses(self):
-        items = None
-        for item in self.items:
-            if items is None:
-                items = item._get_valid_subclasses()
+    def _check_isinstance(self, instance) -> bool:
+        return isinstance(instance, self._plugin_type)
+
+class _PluginMultiMeta(_PluginMeta):
+    def __init__(self, *plugin_types: _PluginMeta):
+        self._plugin_types = plugin_types
+
+    def __class_getitem__(cls, item):
+        if not isinstance(item, tuple):
+            item = (item,)
+        for plugin_type in item:
+            if not isinstance(plugin_type, _PluginMeta):
+                raise TypeError(f"{cls.__name__.lstrip('_')} can only be used with PluginMeta types (e.g. PluginAdapter, PluginUnion, PluginIntersection), got {plugin_type}")
+        return cls(*item)
+    
+    _check_isinstance_iterator: Callable[[Iterable[bool]], bool]
+    def _check_isinstance(self, instance):
+        if not self._plugin_types:
+            return False
+        return self._check_isinstance_iterator(t._check_isinstance(instance) for t in self._plugin_types) 
+
+class _PluginUnion(_PluginMultiMeta):
+    @property
+    def _plugin_union_expansion(self):
+        return tuple(t for ts in self._plugin_types for t in ts._plugin_union_expansion)
+    
+    _check_isinstance_iterator = any
+
+    def _collect_plugantic_options(self):
+        options_discriminators: _MutableOptionsDiscriminator = {}
+        options_literals: _MutableOptionsLiterals = {}
+
+        for plugin_type in self._plugin_types:
+            options = plugin_type._collect_plugantic_options()
+            if options is None:
                 continue
-            items.update(item._get_valid_subclasses())
-        return items or set()
+            options_discriminators_sub, options_literals_sub = options
 
-    def _get_valid_shorthands(self):
-        shorthands = {}
-        for item in self.items:
-            for name, shitem in item._get_valid_shorthands().items():
-                if name in shorthands and shorthands[name] is not shitem:
-                    del shorthands[name] # remove ambiguous shorthands
-                    continue
-                shorthands[name] = shitem
-        return shorthands
+            for discriminator, options_sub in options_discriminators_sub.items():
+                options_discriminators.setdefault(discriminator, set()).update(options_sub)
+            
+            for literal, item in options_literals_sub.items():
+                if options_literals.get(literal, item) != item:
+                    raise ValueError(f"Literal shorthand {literal} was given to multiple items: {item!r} and {options_literals[literal]!r}")
+                options_literals[literal] = item
+
+        return options_discriminators, options_literals
+    
+class _PluginIntersection(_PluginMultiMeta):
+    @property
+    def _plugin_intersection_expansion(self):
+        return tuple(t for ts in self._plugin_types for t in ts._plugin_intersection_expansion)
+    
+    _check_isinstance_iterator = all
+
+    def _collect_plugantic_options(self):
+        options_discriminators: _MutableOptionsDiscriminator|None = None
+        options_literals: _MutableOptionsLiterals|None = None
+
+        for plugin_type in self._plugin_types:
+            options = plugin_type._collect_plugantic_options()
+            if options is None:
+                return None
+            options_discriminators_sub, options_literals_sub = options
+
+            if options_discriminators is None:
+                options_discriminators = {k: set(v) for k, v in options_discriminators_sub.items()}
+            else:
+                options_discriminators_new = {}
+                for discriminator, options_sub in options_discriminators_sub.items():
+                    if discriminator not in options_discriminators:
+                        continue
+                    options_discriminators_new[discriminator] = options_discriminators[discriminator].intersection(options_sub)
+                options_discriminators = options_discriminators_new
+            
+            if options_literals is None:
+                options_literals = {**options_literals_sub}
+            else:
+                options_literals_new = {}
+                for literal, item in options_literals_sub.items():
+                    if options_literals.get(literal) != item:
+                        continue
+                    options_literals_new[literal] = item
+                options_literals = options_literals_new
+
+        return options_discriminators or {}, options_literals or {}
+
+if TYPE_CHECKING:
+    PluginAdapter: TypeAlias = T
+    PluginUnion = Union
+    PluginIntersection = Union
+else:
+    PluginAdapter = _PluginWrapper
+    PluginUnion = _PluginUnion
+    PluginIntersection = _PluginIntersection
