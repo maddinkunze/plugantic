@@ -1,5 +1,5 @@
 from typing import Literal
-from plugantic import PluginModel, PluginAdapter, PluginIntersection
+from plugantic import PluginModel, PluginAdapter, PluginIntersection, DEFAULT_LITERAL
 from pydantic import BaseModel
 
 from ._common import InvalidTestStateException
@@ -18,16 +18,16 @@ def test_combined_usage():
         pass
     
     class Impl1(Feature1, Feature2):
-        type: Literal["impl1"] = "impl1"
+        type: Literal["impl1"] = DEFAULT_LITERAL
 
     class Impl2(Feature2, Feature3):
-        type: Literal["impl2"] = "impl2"
+        type: Literal["impl2"] = DEFAULT_LITERAL
 
     class Impl3(Feature3):
-        type: Literal["impl3"] = "impl3"
+        type: Literal["impl3"] = DEFAULT_LITERAL
 
     class Impl4(Base):
-        type: Literal["impl4"] = "impl4"
+        type: Literal["impl4"] = DEFAULT_LITERAL
 
     BaseRef = PluginAdapter[Base]
     Feature1Ref = PluginAdapter[Feature1]

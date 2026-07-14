@@ -1,5 +1,5 @@
 from typing_extensions import Literal
-from plugantic import PluginModel, PluginAdapter, Field
+from plugantic import PluginModel, PluginAdapter, Field, DEFAULT_LITERAL
 from pydantic import BaseModel
 
 def test_basic_usage_subclass_args():
@@ -58,7 +58,7 @@ def test_basic_usage_subclass_annotated():
         number: int|None = None
         
     class TestImplNumberStrict(TestImplNumber):
-        type: Literal["number-strict"] # pyright: ignore[reportIncompatibleVariableOverride]
+        type: Literal["number-strict"] = DEFAULT_LITERAL # pyright: ignore[reportIncompatibleVariableOverride]
         number: int = 0 # pyright: ignore[reportIncompatibleVariableOverride]
         
     class OtherConfig(BaseModel):
@@ -66,7 +66,7 @@ def test_basic_usage_subclass_annotated():
         
     OtherConfig(config=TestImplText(value="some text", text="other text"))
     OtherConfig(config=TestImplNumber(value="some number")) # pyright: ignore[reportCallIssue]
-    OtherConfig(config=TestImplNumberStrict(value="strict number", number=3)) # pyright: ignore[reportCallIssue]
+    OtherConfig(config=TestImplNumberStrict(value="strict number", number=3))
     
     c1 = OtherConfig.model_validate({"config": {
         "type": "text",
