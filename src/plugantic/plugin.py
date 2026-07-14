@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, Field
 from pydantic_core.core_schema import CoreSchema, union_schema, tagged_union_schema, literal_schema, no_info_plain_validator_function, json_or_python_schema
-from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeVarTuple, TypeAlias, Iterable, Collection, Callable, TypeIs, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
+from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeVarTuple, TypeAlias, Iterable, Collection, Callable, TypeIs, Sentinel, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
 from propert import classproperty, cached_classproperty
 
 _LiteralType: TypeAlias = Union[str, int, float, bool, None]
@@ -22,6 +22,8 @@ def ensure_literal_value_collection(value: _LiteralType|Collection[_LiteralType]
     if is_literal_value(value):
         return (value,)
     return value
+
+DEFAULT_LITERAL: Any = Sentinel("DEFAULT_LITERAL")
 
 _CollectedSubclassesType = Mapping[str, Mapping[_LiteralType, Collection[Type["PluginModel"]]]]
 _CollectedShorthandsType = Mapping[_LiteralType, "PluginModel|Callable[[], PluginModel]"]
@@ -110,6 +112,11 @@ class PluginModel(BaseModel):
     if not TYPE_CHECKING:
         def __init__(self, *args, **kwargs):
             if self.__plugantic_declared_values__:
+                # if the discriminator value is explicitly set to the default sentinel, remove it so a valid value can be set
+                if kwargs.get(self.__plugantic_discriminator__, None) is DEFAULT_LITERAL:
+                    kwargs.pop(self.__plugantic_discriminator__)
+
+                # if no value is provided for the discriminator (or if it was explicitly unset/removed by the previous rules), set it to the first declared value so the model can be validated
                 kwargs.setdefault(self.__plugantic_discriminator__, next(iter(self.__plugantic_declared_values__)))
             super().__init__(*args, **kwargs)
 
