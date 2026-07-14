@@ -57,6 +57,7 @@ class OutputConfig(PluginModel, varname_type="mode"):
 
 class TextConfig(OutputConfig):
     # No redundant "text" definition here!
+    # (see in the concise section below, if it doesnt work for you)
     mode: Literal["text"]
     text: str
     def print(self):
@@ -160,6 +161,32 @@ MyConfig.model_validate({"source": {"type": "file", "path": "/dev/null"}})
 MyConfig.model_validate({"source": "search"}) # this and
 MyConfig.model_validate({"source": "web_search"}) # this are shorthands for
 MyConfig.model_validate({"source": {"type": "url", "url": "https://example.com/search"}})
+```
+
+### 🪡 ‍Concise Code
+
+The entire project aims to reduce unnecessary repetitions. Thus, you can write the following code and it will work as intended:
+
+```python
+class Logger(PluginModel):
+    ...
+
+class StdoutLogger(Logger):
+    type: Literal["stdout", "standardout"] # no need to declare an explicit default (no `= "stdout"`)
+    ...
+
+logger = StdoutLogger() # will work, but might show a type warning
+print(logger.type) # -> "stdout" (always injects the first declared value, if not explicitly instantiated otherwise)
+```
+
+Depending on your type-checker, this might show a warning that you did not pass a value to the "required" argument `type`. At runtime this will work as is, but to make the type-checker happy, you can use the following syntax:
+
+```python
+class StdoutLogger(Logger):
+    type: Literal["stdout", "standardout"] = DEFAULT_LITERAL # no need to repeat the declared values
+
+logger = StdoutLogger() # will work without showing a type warning
+print(logger.typ) # -> "stdout"
 ```
 
 ### 🚦 Intersection Types
