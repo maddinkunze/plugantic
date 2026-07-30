@@ -22,9 +22,9 @@ dev = [
 
 
 [project.urls]
-Homepage = "https://github.com/martinkunze/plugantic"
-Documentation = "https://github.com/martinkunze/plugantic/blob/main/README.md"
-Source = "https://github.com/martinkunze/plugantic"
+Homepage = "https://github.com/maddinkunze/plugantic"
+Documentation = "https://github.com/maddinkunze/plugantic/blob/main/README.md"
+Source = "https://github.com/maddinkunze/plugantic"
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
