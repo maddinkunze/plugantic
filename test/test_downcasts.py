@@ -11,7 +11,7 @@ def test_basic_downcast():
         number: int
 
     class Base3(PluginModel):
-        pass
+        model_config = {"extra": "forbid"} # not having this forbid config here can lead to `c2` being downcasted to `Impl5` instead of `Impl4` (which in itself can be considered valid if extra data is not considered harmful)
 
     class Impl1(Base1, value="impl"):
         pass
