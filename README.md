@@ -52,7 +52,7 @@ This library solves all of these issues (and more), so you can just write
 ```python
 from plugantic import PluginModel, PluginAdapter
 
-class OutputConfig(PluginModel, varname_type="mode"):
+class OutputConfig(PluginModel, discriminator="mode"):
     def print(self): ...
 
 class TextConfig(OutputConfig):

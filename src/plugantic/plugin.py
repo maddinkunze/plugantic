@@ -44,7 +44,7 @@ class PydanticNeverType: # TODO: there has to be a better way to have a type in 
         return {"not": {}}  # Matches nothing
 
 class PluganticConfigDict(ConfigDict, total=False):
-    varname_type: str
+    discriminator: str
     value: _LiteralType|Collection[_LiteralType]
     allow_changes_after_collection: bool
     show_in_schema: bool
