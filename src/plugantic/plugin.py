@@ -6,11 +6,6 @@ from propert import classproperty, cached_classproperty
 
 _LiteralType: TypeAlias = Union[str, int, float, bool, None]
 
-if TYPE_CHECKING:
-    _LiteralUnset = None
-else:
-    _LiteralUnset = object()
-
 def is_literal_value(value: Any) -> TypeIs[_LiteralType]:
     if value is None:
         return True
@@ -23,12 +18,15 @@ def ensure_literal_value_collection(value: _LiteralType|Collection[_LiteralType]
         return (value,)
     return value
 
+_UNSET_LITERAL: Any = Sentinel("_UNSET_LITERAL")
 DEFAULT_LITERAL: Any = Sentinel("DEFAULT_LITERAL")
 
-_CollectedSubclassesType = Mapping[str, Mapping[_LiteralType, Collection[Type["PluginModel"]]]]
+_CollectedSubclassesType = Collection[Type["PluginModel"]]
+_CollectedDiscriminatedType = Mapping[str, Mapping[_LiteralType, Collection[Type["PluginModel"]]]]
 _CollectedShorthandsType = Mapping[_LiteralType, "PluginModel|Callable[[], PluginModel]"]
-_CollectedOptionsType = Tuple[_CollectedSubclassesType, _CollectedShorthandsType]
+_CollectedOptionsType = Tuple[_CollectedSubclassesType, _CollectedDiscriminatedType, _CollectedShorthandsType]
 
+_MutableOptionsSubclasses = Set[Type["PluginModel"]]
 _MutableOptionsDiscriminator = Dict[str, Dict[_LiteralType, Set[Type["PluginModel"]]]]
 _MutableOptionsLiterals = Dict[_LiteralType, "PluginModel|Callable[[], PluginModel]"]
 
@@ -44,7 +42,7 @@ class PydanticNeverType: # TODO: there has to be a better way to have a type in 
         return {"not": {}}  # Matches nothing
 
 class PluganticConfigDict(ConfigDict, total=False):
-    discriminator: str
+    discriminator: str|None
     value: _LiteralType|Collection[_LiteralType]
     allow_changes_after_collection: bool
     show_in_schema: bool
@@ -53,7 +51,7 @@ class PluganticConfigDict(ConfigDict, total=False):
 class PluginModel(BaseModel):
     __plugantic_declared_values__: ClassVar[Collection[_LiteralType]] = ()
     __plugantic_shorthands__: ClassVar[Dict[_LiteralType, Self|Callable[[], Self]]] = {}
-    __plugantic_discriminator__: ClassVar[str] = "type"
+    __plugantic_discriminator__: ClassVar[str|None] = "type"
     __plugantic_collected_options__: ClassVar[_CollectedOptionsType|None] = None
     __plugantic_check_collected__: ClassVar[bool] = True
     __plugantic_show_in_schema__: ClassVar[bool|None] = None
@@ -121,8 +119,8 @@ class PluginModel(BaseModel):
             super().__init__(*args, **kwargs)
 
     def __init_subclass__(cls, *,
-        discriminator: str|None=None,
-        value: _LiteralType|Collection[_LiteralType]=_LiteralUnset,
+        discriminator: str|None=_UNSET_LITERAL,
+        value: _LiteralType|Collection[_LiteralType]=_UNSET_LITERAL,
         allow_changes_after_collection: bool|None=None,
         show_in_schema: bool|None=None,
         show_sub_in_schema: bool|None=None,
@@ -147,23 +145,25 @@ class PluginModel(BaseModel):
         elif show_sub_in_schema_mc is not None:
             cls.__plugantic_show_sub_in_schema__ = show_sub_in_schema_mc
 
-        discriminator_mc = cls.model_config.get("discriminator", None)
-        if discriminator is not None:
+        discriminator_mc = cls.model_config.get("discriminator", _UNSET_LITERAL)
+        if discriminator is not _UNSET_LITERAL:
             cls.__plugantic_discriminator__ = discriminator
-        elif discriminator_mc is not None:
+        elif discriminator_mc is not _UNSET_LITERAL:
             cls.__plugantic_discriminator__ = discriminator_mc
 
         values_set: Collection[_LiteralType]|None = None
-        values_mc = cls.model_config.get("value", _LiteralUnset)
-        if value is not _LiteralUnset:
+        values_mc = cls.model_config.get("value", _UNSET_LITERAL)
+        if value is not _UNSET_LITERAL:
             values_set = ensure_literal_value_collection(value)
-        elif values_mc is not _LiteralUnset:
+        elif values_mc is not _UNSET_LITERAL:
             values_set = ensure_literal_value_collection(values_mc)
-        if values_set is None:
-            values_set = cls._get_declared_plugantic_values_from_annotations()
+        discriminator = cls.__plugantic_discriminator__
+        if (values_set is None) and (discriminator is not None):
+            values_set = cls._get_declared_plugantic_values_from_annotations(discriminator)
         if values_set is not None:
             cls.__plugantic_declared_values__ = values_set
-            cls._create_plugantic_annotation()
+            if discriminator is not None:
+                cls._create_plugantic_annotation(discriminator)
 
         if kwargs:
             raise ValueError(f"Unexpected keyword arguments in subclass definition: {kwargs.keys()}")
@@ -175,24 +175,24 @@ class PluginModel(BaseModel):
         return Literal.__getitem__(tuple(cls.__plugantic_declared_values__)) # type: ignore # essentially the same as `Literal[*value]`, but the unpacking syntax is not supported on older python versions (<3.11)
 
     @classmethod
-    def _create_plugantic_annotation(cls):
+    def _create_plugantic_annotation(cls, discriminator: str):
         """
         Create an annotation of value for the given name as a member variable of the class
         e.g. name="type" value=Literal["test"] -> `type: Literal["test"]`
         """
         if not hasattr(cls, "__annotations__"):
             cls.__annotations__ = {}
-        existing_annotation = cls._get_plugantic_value_annotations()
+        existing_annotation = cls._get_plugantic_value_annotations(discriminator=discriminator)
         value = cls._make_plugantic_literal()
         if existing_annotation == value:
             return
-        cls.__annotations__[cls.__plugantic_discriminator__] = value
+        cls.__annotations__[discriminator] = value
 
     @classmethod
-    def _get_plugantic_value_annotations(cls):
+    def _get_plugantic_value_annotations(cls, discriminator: str) -> Any:
         annotation = None
         try:
-            annotation = get_type_hints(cls).get(cls.__plugantic_discriminator__, None)
+            annotation = get_type_hints(cls).get(discriminator, None)
         except (NameError, TypeError):
             pass
         #if not annotation:
@@ -202,8 +202,8 @@ class PluginModel(BaseModel):
         return annotation
 
     @classmethod
-    def _get_declared_plugantic_values_from_annotations(cls) -> Set[_LiteralType]|None:
-        field = cls._get_plugantic_value_annotations()
+    def _get_declared_plugantic_values_from_annotations(cls, discriminator: str) -> Set[_LiteralType]|None:
+        field = cls._get_plugantic_value_annotations(discriminator)
 
         if get_origin(field) is Literal:
             return set(get_args(field))
@@ -231,27 +231,34 @@ class PluginModel(BaseModel):
     def _collect_plugantic_options(cls) -> _CollectedOptionsType:
         if cls.__plugantic_collected_options__ is not None:
             return cls.__plugantic_collected_options__
-        
-        subclasses: _MutableOptionsDiscriminator = {}
+
+        subclasses: _MutableOptionsSubclasses = set()
+        discriminated: _MutableOptionsDiscriminator = {}
         shorthands: _MutableOptionsLiterals = {}
+
+        discriminator = cls.__plugantic_discriminator__
         if cls._should_show_in_schema():
-            for value in cls.__plugantic_declared_values__:
-                subclasses.setdefault(cls.__plugantic_discriminator__, {}).setdefault(value, set()).add(cls)
+            if discriminator is None:
+                subclasses.add(cls)
+            else:
+                for value in cls.__plugantic_declared_values__:
+                    discriminated.setdefault(discriminator, {}).setdefault(value, set()).add(cls)
         for shorthand, item in cls.__plugantic_shorthands__.items():
             shorthands[shorthand] = item
             
         for subcls in cls.__subclasses__():
-            subclasses_sub, shorthands_sub = subcls._collect_plugantic_options()
-            for discriminator, subcls_map in subclasses_sub.items():
+            subclasses_sub, discriminated_sub, shorthands_sub = subcls._collect_plugantic_options()
+            subclasses.update(subclasses_sub)
+            for discriminator, subcls_map in discriminated_sub.items():
                 for value, subcls_set in subcls_map.items():
-                    subclasses.setdefault(discriminator, {}).setdefault(value, set()).update(subcls_set)
+                    discriminated.setdefault(discriminator, {}).setdefault(value, set()).update(subcls_set)
             for shorthand, item in shorthands_sub.items():
                 if shorthands.get(shorthand, item) != item:
                     raise ValueError(f"Shorthand {shorthand} was given to multiple items: {item!r} and {shorthands[shorthand]!r}")
                 shorthands[shorthand] = item
 
-        cls.__plugantic_collected_options__ = subclasses, shorthands
-        return subclasses, shorthands
+        cls.__plugantic_collected_options__ = subclasses, discriminated, shorthands
+        return subclasses, discriminated, shorthands
 
 T = TypeVar("T", bound=PluginModel)
 Ts = TypeVarTuple("Ts")
@@ -306,7 +313,7 @@ class _PluginMeta:
             raise ValueError(f"Value {v!r} is not an instance of the required plugin type")
         schema_isinstance = no_info_plain_validator_function(_check_isinstance)
 
-        options_discriminators, options_literals = collected_options
+        options_classes, options_discriminators, options_literals = collected_options
 
         if options_literals:
             values_literals = list(options_literals.keys())
@@ -337,6 +344,15 @@ class _PluginMeta:
 
                 choices_discriminator[value] = schema_option
             schemas.append(tagged_union_schema(choices_discriminator, discriminator))
+
+        if options_classes:
+            options_ordered = sorted(options_classes, key=lambda x: x.__plugantic_order__, reverse=True)
+            schemas_ordered = [handler.generate_schema(option) for option in options_ordered]
+            if len(schemas_ordered) == 1:
+                schema_option = schemas_ordered[0]
+            else:
+                schema_option = union_schema(list(schemas_ordered), mode="left_to_right")
+            schemas.append(schema_option)
 
         if not schemas:
             json_schema = handler.generate_schema(PydanticNeverType)
@@ -394,6 +410,7 @@ class _PluginUnion(_PluginMultiMeta):
     _check_isinstance_iterator = any
 
     def _collect_plugantic_options(self):
+        options_classes: _MutableOptionsSubclasses = set()
         options_discriminators: _MutableOptionsDiscriminator = {}
         options_literals: _MutableOptionsLiterals = {}
 
@@ -401,7 +418,9 @@ class _PluginUnion(_PluginMultiMeta):
             options = plugin_type._collect_plugantic_options()
             if options is None:
                 continue
-            options_discriminators_sub, options_literals_sub = options
+            options_classes_sub, options_discriminators_sub, options_literals_sub = options
+
+            options_classes.update(options_classes_sub)
 
             for discriminator, choices_sub in options_discriminators_sub.items():
                 for value, options_sub in choices_sub.items():
@@ -412,7 +431,7 @@ class _PluginUnion(_PluginMultiMeta):
                     raise ValueError(f"Literal shorthand {literal} was given to multiple items: {item!r} and {options_literals[literal]!r}")
                 options_literals[literal] = item
 
-        return options_discriminators, options_literals
+        return options_classes, options_discriminators, options_literals
     
 class _PluginIntersection(_PluginMultiMeta):
     @property
@@ -422,6 +441,7 @@ class _PluginIntersection(_PluginMultiMeta):
     _check_isinstance_iterator = all
 
     def _collect_plugantic_options(self):
+        options_classes: _MutableOptionsSubclasses|None = None
         options_discriminators: _MutableOptionsDiscriminator|None = None
         options_literals: _MutableOptionsLiterals|None = None
 
@@ -429,7 +449,12 @@ class _PluginIntersection(_PluginMultiMeta):
             options = plugin_type._collect_plugantic_options()
             if options is None:
                 return None
-            options_discriminators_sub, options_literals_sub = options
+            options_classes_sub, options_discriminators_sub, options_literals_sub = options
+
+            if options_classes is None:
+                options_classes = set(options_classes_sub)
+            else:
+                options_classes.intersection_update(options_classes_sub)
 
             if options_discriminators is None:
                 options_discriminators = {v: {k: set(v) for k, v in vs.items()} for v, vs in options_discriminators_sub.items()}
@@ -457,7 +482,7 @@ class _PluginIntersection(_PluginMultiMeta):
                     options_literals_new[literal] = item
                 options_literals = options_literals_new
 
-        return options_discriminators or {}, options_literals or {}
+        return options_classes or set(), options_discriminators or {}, options_literals or {}
 
 if TYPE_CHECKING:
     PluginAdapter: TypeAlias = T
