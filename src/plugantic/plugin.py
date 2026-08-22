@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, Field
 from pydantic_core.core_schema import CoreSchema, union_schema, tagged_union_schema, literal_schema, no_info_plain_validator_function, json_or_python_schema
-from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeVarTuple, TypeAlias, Iterable, Collection, Callable, TypeIs, Sentinel, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
+from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeAlias, Iterable, Collection, Callable, TypeIs, Sentinel, Annotated, LiteralString, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
 from propert import classproperty, cached_classproperty
 
 _LiteralType: TypeAlias = Union[str, int, float, bool, None]
@@ -75,6 +75,66 @@ def _get_plugantic_model(item: Type, check_meta: bool=False) -> Tuple[Type["Plug
 
     return None, None
 
+def _unwrap_type(item):
+    origin = get_origin(item)
+    args = get_args(item)
+    params = getattr(item, "__parameters__", ())
+    if origin is None:
+        origin = _get_pydantic_origin(item)
+        args, params = _get_pydantic_args(item)
+    if origin is None:
+        return item, (), ()
+    if origin == Annotated:
+        return _unwrap_type(get_args(item)[0])
+    return origin, args, params
+
+def _is_assignable(value_type: Any, target_type: Any) -> bool:
+    # the types are identical, so the value is assignable to the target type
+    if value_type == target_type:
+        return True
+
+    # either one of the values is any type, which is assignable to and from any other type
+    if value_type == Any or target_type == Any:
+        return True
+
+    if isinstance(value_type, TypeVar):
+        ... # TODO
+
+    if isinstance(target_type, TypeVar):
+        ... # TODO
+
+    value_origin, value_args, value_params = _unwrap_type(value_type)
+    target_origin, target_args, target_params = _unwrap_type(target_type)
+    
+    if value_origin is None:
+        value_origin = value_type
+
+    # special rule in python; int is assignable to float and complex, and float is assignable to complex
+    if target_origin in (float, complex) and isinstance(value_origin, type) and issubclass(value_origin, (int, float)):
+        return True
+
+    # special handling for literal types
+    if value_origin == Literal:
+        if target_origin == LiteralString:
+            return all(isinstance(v, str) for v in value_args)
+        elif target_origin == Literal:
+            return all(v in target_args for v in value_args)
+        else:
+            return all(_is_assignable(type(v), target_origin) for v in value_args)
+    elif target_origin == Literal:
+        return False
+
+    if value_origin == Union:
+        return all(_is_assignable(v, target_type) for v in value_args)
+    elif target_origin == Union:
+        return any(_is_assignable(value_type, t) for t in target_args)
+
+    if isinstance(target_origin, type) and isinstance(value_origin, type) and issubclass(value_origin, target_origin):
+        breakpoint()
+        return True # TODO: check generic args for assignability?
+
+    return False
+
 class PydanticNeverType: # TODO: there has to be a better way to have a type in pydantic that matches no value
     @classmethod
     def __get_pydantic_core_schema__(cls, *_1, **_2):
@@ -92,6 +152,7 @@ class PluganticConfigDict(ConfigDict, total=False):
     allow_changes_after_collection: bool
     show_in_schema: bool
     show_sub_in_schema: bool
+    check_generics: bool
 
 class PluginModel(BaseModel):
     __plugantic_declared_values__: ClassVar[Collection[_LiteralType]] = ()
@@ -99,6 +160,7 @@ class PluginModel(BaseModel):
     __plugantic_discriminator__: ClassVar[str|None] = "type"
     __plugantic_collected_options__: ClassVar[Dict[Tuple[Type], _CollectedOptionsType]] = {}
     __plugantic_check_collected__: ClassVar[bool] = True
+    __plugantic_check_generics__: ClassVar[bool] = True
     __plugantic_show_in_schema__: ClassVar[bool|None] = None
     __plugantic_show_sub_in_schema__: ClassVar[bool] = True
 
@@ -167,6 +229,7 @@ class PluginModel(BaseModel):
         discriminator: str|None=_UNSET_LITERAL,
         value: _LiteralType|Collection[_LiteralType]=_UNSET_LITERAL,
         allow_changes_after_collection: bool|None=None,
+        check_generics: bool|None=None,
         show_in_schema: bool|None=None,
         show_sub_in_schema: bool|None=None,
     **kwargs):
@@ -181,6 +244,12 @@ class PluginModel(BaseModel):
 
         if not cls._are_plugantic_changes_allowed():
             raise ValueError("Cannot create a new PluginModel subclass after the plugin schema for it has been created. Make sure to define all PluginModel subclasses before using them in a PluginAdapter or similar or make sure the consumer of PluginAdapter uses `defer_build` or similar mechanisms.")
+
+        check_generics_mc = cls.model_config.get("check_generics", None)
+        if check_generics is not None:
+            cls.__plugantic_check_generics__ = check_generics
+        elif check_generics_mc is not None:
+            cls.__plugantic_check_generics__ = check_generics_mc
         
         cls.__plugantic_show_in_schema__ = cls.model_config.get("show_in_schema", show_in_schema)
 
@@ -262,7 +331,7 @@ class PluginModel(BaseModel):
         for supcls in cls.mro():
             if not issubclass(supcls, PluginModel):
                 continue
-            if supcls.__plugantic_collected_options__ is not None:
+            if supcls.__plugantic_collected_options__: # TODO: extend this check to check specifically if the new subclass would have been collected by a previous run
                 return False
         return True
 
@@ -270,7 +339,9 @@ class PluginModel(BaseModel):
     def _should_show_in_schema(cls, source: Type):
         if cls.__plugantic_show_in_schema__ is not None:
             return cls.__plugantic_show_in_schema__
-        return cls.__plugantic_show_sub_in_schema__
+        if not cls.__plugantic_show_sub_in_schema__:
+            return False
+        
 
     @classmethod
     def _collect_plugantic_options(cls, source: Type) -> _CollectedOptionsType:
@@ -410,7 +481,7 @@ class _PluginMeta:
             json_schema = union_schema(schemas, mode="left_to_right")
             python_schema = union_schema([schema_isinstance, *schemas], mode="left_to_right")
         return json_or_python_schema(json_schema, python_schema)
-        
+
 class _PluginWrapper(_PluginMeta):
     def __init__(self, plugin_type: Type[PluginModel], *, plugin_base: Type[PluginModel]|None=None):
         self._plugin_type = plugin_type
