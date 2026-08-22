@@ -30,6 +30,51 @@ _MutableOptionsSubclasses = Set[Type["PluginModel"]]
 _MutableOptionsDiscriminator = Dict[str, Dict[_LiteralType, Set[Type["PluginModel"]]]]
 _MutableOptionsLiterals = Dict[_LiteralType, "PluginModel|Callable[[], PluginModel]"]
 
+_P = TypeVar("_P", bound=BaseModel)
+
+@overload
+def _get_pydantic_origin(item: Type[_P]) -> Type[_P]: ...
+@overload
+def _get_pydantic_origin(item: Any) -> Type[BaseModel]|None: ...
+def _get_pydantic_origin(item):
+    if not isinstance(item, type(BaseModel)):
+        return None
+    origin = item.__pydantic_generic_metadata__.get("origin")
+    if origin is None:
+        return item
+    return origin
+
+def _get_pydantic_args(item):
+    if not isinstance(item, type(BaseModel)):
+        return (), ()
+    metadata = item.__pydantic_generic_metadata__
+    return metadata.get("args", ()), metadata.get("parameters", ())
+    
+def _get_plugantic_model(item: Type, check_meta: bool=False) -> Tuple[Type["PluginModel"]|None, "_PluginMeta|None"]:
+    if isinstance(item, type) and issubclass(item, PluginModel):
+        item = _get_pydantic_origin(item)
+        return item, None
+    if check_meta and isinstance(item, _PluginMeta):
+        return None, item
+    
+    origin = get_origin(item)
+    if isinstance(origin, type) and issubclass(origin, PluginModel):
+        origin = _get_pydantic_origin(origin)
+        return origin, None
+    if check_meta and isinstance(origin, _PluginMeta):
+        return None, origin
+
+    args = get_args(item)
+    if (origin == Annotated):
+        anned = args[0]
+        if isinstance(anned, type) and issubclass(anned, PluginModel):
+            anned = _get_pydantic_origin(anned)
+            return anned, None
+        if check_meta and isinstance(anned, _PluginMeta):
+            return None, anned
+
+    return None, None
+
 class PydanticNeverType: # TODO: there has to be a better way to have a type in pydantic that matches no value
     @classmethod
     def __get_pydantic_core_schema__(cls, *_1, **_2):
@@ -52,7 +97,7 @@ class PluginModel(BaseModel):
     __plugantic_declared_values__: ClassVar[Collection[_LiteralType]] = ()
     __plugantic_shorthands__: ClassVar[Dict[_LiteralType, Self|Callable[[], Self]]] = {}
     __plugantic_discriminator__: ClassVar[str|None] = "type"
-    __plugantic_collected_options__: ClassVar[_CollectedOptionsType|None] = None
+    __plugantic_collected_options__: ClassVar[Dict[Tuple[Type], _CollectedOptionsType]] = {}
     __plugantic_check_collected__: ClassVar[bool] = True
     __plugantic_show_in_schema__: ClassVar[bool|None] = None
     __plugantic_show_sub_in_schema__: ClassVar[bool] = True
@@ -126,7 +171,7 @@ class PluginModel(BaseModel):
         show_sub_in_schema: bool|None=None,
     **kwargs):
         cls.__plugantic_shorthands__ = {}
-        cls.__plugantic_collected_options__ = None
+        cls.__plugantic_collected_options__ = {}
 
         allow_changes = cls.model_config.get("allow_changes_after_collection", None)
         if allow_changes_after_collection is not None:
@@ -222,22 +267,24 @@ class PluginModel(BaseModel):
         return True
 
     @classmethod
-    def _should_show_in_schema(cls):
+    def _should_show_in_schema(cls, source: Type):
         if cls.__plugantic_show_in_schema__ is not None:
             return cls.__plugantic_show_in_schema__
         return cls.__plugantic_show_sub_in_schema__
 
     @classmethod
-    def _collect_plugantic_options(cls) -> _CollectedOptionsType:
-        if cls.__plugantic_collected_options__ is not None:
-            return cls.__plugantic_collected_options__
+    def _collect_plugantic_options(cls, source: Type) -> _CollectedOptionsType:
+        _cache_key = (source,)
+        cached_options = cls.__plugantic_collected_options__.get(_cache_key, None)
+        if cached_options is not None:
+            return cached_options
 
         subclasses: _MutableOptionsSubclasses = set()
         discriminated: _MutableOptionsDiscriminator = {}
         shorthands: _MutableOptionsLiterals = {}
 
         discriminator = cls.__plugantic_discriminator__
-        if cls._should_show_in_schema():
+        if cls._should_show_in_schema(source):
             if discriminator is None:
                 subclasses.add(cls)
             else:
@@ -247,7 +294,7 @@ class PluginModel(BaseModel):
             shorthands[shorthand] = item
             
         for subcls in cls.__subclasses__():
-            subclasses_sub, discriminated_sub, shorthands_sub = subcls._collect_plugantic_options()
+            subclasses_sub, discriminated_sub, shorthands_sub = subcls._collect_plugantic_options(source)
             subclasses.update(subclasses_sub)
             for discriminator, subcls_map in discriminated_sub.items():
                 for value, subcls_set in subcls_map.items():
@@ -257,11 +304,10 @@ class PluginModel(BaseModel):
                     raise ValueError(f"Shorthand {shorthand} was given to multiple items: {item!r} and {shorthands[shorthand]!r}")
                 shorthands[shorthand] = item
 
-        cls.__plugantic_collected_options__ = subclasses, discriminated, shorthands
+        cls.__plugantic_collected_options__[_cache_key] = subclasses, discriminated, shorthands
         return subclasses, discriminated, shorthands
 
 T = TypeVar("T", bound=PluginModel)
-Ts = TypeVarTuple("Ts")
 
 class _PluginMeta:
     @property
@@ -366,19 +412,24 @@ class _PluginMeta:
         return json_or_python_schema(json_schema, python_schema)
         
 class _PluginWrapper(_PluginMeta):
-    def __init__(self, plugin_type: Type[PluginModel]):
+    def __init__(self, plugin_type: Type[PluginModel], *, plugin_base: Type[PluginModel]|None=None):
         self._plugin_type = plugin_type
+        if plugin_base is None:
+            plugin_base, _ = _get_plugantic_model(plugin_type)
+        assert plugin_base is not None, "plugin_base must not be None; if you manually instantiated _PluginWrapper, try passing a direct subclass of PluginModel to the plugin_base kwarg"
+        self._plugin_base = plugin_base
 
     def __class_getitem__(cls, item):
-        if not isinstance(item, type) or not issubclass(item, PluginModel):
+        base, _ = _get_plugantic_model(item)
+        if base is None:
             raise TypeError(f"PluginAdapter can only be used with {PluginModel.__name__} subclasses, got {item}")
-        return cls(item)
+        return cls(item, plugin_base=base)
     
     def _collect_plugantic_options(self):
-        return self._plugin_type._collect_plugantic_options()
+        return self._plugin_base._collect_plugantic_options(self._plugin_type)
 
     def _check_isinstance(self, instance) -> bool:
-        return isinstance(instance, self._plugin_type)
+        return isinstance(instance, self._plugin_base)
 
 class _PluginMultiMeta(_PluginMeta):
     def __init__(self, *plugin_types: _PluginMeta):
@@ -389,11 +440,12 @@ class _PluginMultiMeta(_PluginMeta):
             item = (item,)
         items = set()
         for plugin_type in item:
-            if isinstance(plugin_type, type) and issubclass(plugin_type, PluginModel):
-                plugin_type = PluginAdapter[plugin_type]
-            if not isinstance(plugin_type, _PluginMeta):
+            plugin_type_model, plugin_type_meta = _get_plugantic_model(plugin_type, check_meta=True)
+            if plugin_type_model is not None:
+                plugin_type = _PluginWrapper(plugin_type, plugin_base=plugin_type_model)
+            if not isinstance(plugin_type_meta, _PluginMeta):
                 raise TypeError(f"{cls.__name__.lstrip('_')} can only be used with PluginMeta types (e.g. PluginAdapter, PluginUnion, PluginIntersection), got {plugin_type}")
-            items.add(plugin_type)
+            items.add(plugin_type_meta)
         return cls(*items)
     
     _check_isinstance_iterator: Callable[[Iterable[bool]], bool]
