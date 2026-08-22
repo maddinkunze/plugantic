@@ -1,7 +1,7 @@
 from abc import abstractmethod
 from pydantic import BaseModel, ConfigDict, GetCoreSchemaHandler, Field
 from pydantic_core.core_schema import CoreSchema, union_schema, tagged_union_schema, literal_schema, no_info_plain_validator_function, json_or_python_schema
-from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeVarTuple, TypeAlias, Iterable, Collection, Callable, TypeIs, Sentinel, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
+from typing_extensions import Any, Self, Literal, Union, ClassVar, Tuple, Set, Dict, Mapping, Type, TypeVar, TypeAlias, Iterable, Collection, Callable, TypeIs, Sentinel, Annotated, get_origin, get_args, get_type_hints, overload, TYPE_CHECKING
 from propert import classproperty, cached_classproperty
 
 _LiteralType: TypeAlias = Union[str, int, float, bool, None]
@@ -262,7 +262,7 @@ class PluginModel(BaseModel):
         for supcls in cls.mro():
             if not issubclass(supcls, PluginModel):
                 continue
-            if supcls.__plugantic_collected_options__ is not None:
+            if supcls.__plugantic_collected_options__: # TODO: see feat-generics branch for non-None use-case
                 return False
         return True
 
